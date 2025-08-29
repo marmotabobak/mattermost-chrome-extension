@@ -22,15 +22,27 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://chatzone.o3t.ru/*"],
-      "js": ["utils.js", "api.js", "ui.js", "content.js"],
+      "matches": [
+        "https://chatzone.o3t.ru/*"
+      ],
+      "js": [
+        "utils.js",
+        "api.js",
+        "id-resolver.js",
+        "ui.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["panel.css"],
-      "matches": ["https://chatzone.o3t.ru/*"]
+      "resources": [
+        "panel.css"
+      ],
+      "matches": [
+        "https://chatzone.o3t.ru/*"
+      ]
     }
   ]
 }

@@ -17,6 +17,10 @@
   if (!API) { console.error("MMS.api not loaded"); return; }
   const { apiGetThread, apiGetUser, fetchUsers } = API;
 
+  const IDR = (window.MMS && window.MMS.idResolver);
+  if (!IDR) { console.error("MMS.idResolver not loaded"); return; }
+  const { getRootPostId, extractPostIdFromString } = IDR;
+
   /*************************************************************************
    * Константы и утилиты
    *************************************************************************/
@@ -32,69 +36,6 @@
   const TAB_ACTIVE_CLASS = "mms-tab-active";
 
   const BASE = location.origin;
-
-  /*************************************************************************
-   * Извлечение rootId (URL + DOM + fallback-клик)
-   *************************************************************************/
-  function isValidPostId(id) {
-    return typeof id === "string" && /^[a-z0-9]{26}$/i.test(id);
-  }
-
-  function extractPostIdFromString(s) {
-    if (!s) return null;
-    const m = s.match(/([a-z0-9]{26})/i);
-    return m ? m[1] : null;
-  }
-
-  function getRootPostIdFromDOM() {
-    const sel = [
-      // RHS (правая панель)
-      '[id^="rhsPostMessageText_"]',
-      '[id^="rhsRootPost_"]',
-      '.SidebarRight [id^="post_"]',
-      // Центр
-      '[id^="postMessageText_"]',
-      '[id^="postContent_"]',
-      '[id^="post_"]',
-    ];
-    for (const s of sel) {
-      const el = document.querySelector(s);
-      if (!el) continue;
-      const id =
-        extractPostIdFromString(el.id) ||
-        extractPostIdFromString(el.getAttribute("data-testid") || "");
-      if (id) return id;
-    }
-    // Иногда id есть в ссылке "Скопировать ссылку"
-    const link = document.querySelector('a[href*="/pl/"]');
-    if (link) {
-      const m = link.getAttribute("href").match(/\/pl\/([a-z0-9]{26})/i);
-      if (m) return m[1];
-    }
-    return null;
-  }
-
-  function getRootPostId() {
-    const url = new URL(location.href);
-    const parts = url.pathname.split("/").filter(Boolean);
-    const grabNext = (arr, key) => {
-      const i = arr.indexOf(key);
-      return i >= 0 && arr[i + 1] ? arr[i + 1] : null;
-    };
-    const fromUrl =
-      grabNext(parts, "pl") ||
-      (parts[0] === "_redirect" && grabNext(parts.slice(1), "pl")) ||
-      grabNext(parts, "thread") ||
-      grabNext(parts, "posts") ||
-      url.searchParams.get("postId");
-
-    if (isValidPostId(fromUrl)) return fromUrl;
-
-    const domId = getRootPostIdFromDOM();
-    if (isValidPostId(domId)) return domId;
-
-    return null;
-  }
 
   /*************************************************************************
    * Нормализация
