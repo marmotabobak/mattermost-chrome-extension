@@ -1,9 +1,10 @@
 // bootstrap.js — подключение стилей и создание плавающей кнопки.
-// Логика не меняется: по клику кнопки вызываем window.MMS.app.togglePanel().
+/* global window, document, chrome */
 
 (() => {
     const SHEET_ID = "mms-stylesheet";
-    const BTN_ID = "mms-fab";
+    const C = (window.MMS && window.MMS.consts) || {};
+    const BTN_ID = C.BTN_ID || "mms-fab";
 
     function ensureStylesheetLink() {
         if (document.getElementById(SHEET_ID)) return;
@@ -21,7 +22,6 @@
         btn.title = "Показать/скрыть панель треда";
         btn.textContent = "Thread Tools";
 
-        // Обработчик клика вызывает togglePanel из content.js (экспортируется в window.MMS.app)
         btn.addEventListener("click", () => {
             const fn = window.MMS && window.MMS.app && window.MMS.app.togglePanel;
             if (typeof fn === "function") fn();

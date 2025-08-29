@@ -25,19 +25,12 @@
   if (!FMT) { console.error("MMS.formatters not loaded"); return; }
   const { normalizeThread, formatDisplayName, toAIJSON } = FMT;
 
-  /*************************************************************************
-   * Константы и утилиты
-   *************************************************************************/
-  const ALLOWED_HOSTS = ["chatzone.o3t.ru"]; // при необходимости добавь домены
+  const C = (window.MMS && window.MMS.consts);
+  if (!C) { console.error("MMS.consts not loaded"); return; }
+  const { BTN_ID, PANEL_ID, ACTIVE_CLASS, TAB_ACTIVE_CLASS, ALLOWED_HOSTS } = C;
+  
   if (!ALLOWED_HOSTS.includes(location.hostname)) return;
 
-
-
-  const BTN_ID = "mms-fab";
-  const PANEL_ID = "mms-side-panel";
-  const PANEL_ROOT_CLASS = "mms-panel";
-  const ACTIVE_CLASS = "mms-active";
-  const TAB_ACTIVE_CLASS = "mms-tab-active";
 
   const BASE = location.origin;
 
@@ -45,17 +38,15 @@
     let panel = qs(`#${PANEL_ID}`);
     if (panel) return panel;
 
-    panel = UI.createPanel({
-      apiGetThread,
-      fetchUsers,
-      getRootPostId,
-      formatDisplayName,
-      normalizeThread,
-      toAIJSON,
-      extractPostIdFromString,
-      consts: { PANEL_ID, ACTIVE_CLASS, TAB_ACTIVE_CLASS },
-    });
-
+  panel = UI.createPanel({
+    apiGetThread,
+    fetchUsers,
+    getRootPostId,
+    formatDisplayName,
+    normalizeThread,
+    toAIJSON,
+    extractPostIdFromString
+  });
     document.body.append(panel);
     return panel;
   }
@@ -78,6 +69,19 @@
       togglePanel();
     }
   });
+
+  const SW = (window.MMS && window.MMS.spaWatcher);
+  if (SW && typeof SW.start === "function") {
+    SW.start(
+      () => document.getElementById(PANEL_ID),
+      (panel) => {
+        if (panel && panel.classList.contains(ACTIVE_CLASS) && panel.__mms__) {
+          panel.__mms__.title.textContent = "Thread Tools";
+          panel.__mms__.refresh();
+        }
+      }
+    );
+  }
 
   let lastHref = location.href;
   setInterval(() => {

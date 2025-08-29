@@ -26,12 +26,14 @@
         "https://chatzone.o3t.ru/*"
       ],
       "js": [
+        "constants.js",
         "utils.js",
         "api.js",
         "id-resolver.js",
         "formatters.js",
         "ui.js",
         "content.js",
+        "spa-watcher.js",
         "bootstrap.js"
       ],
       "run_at": "document_idle"

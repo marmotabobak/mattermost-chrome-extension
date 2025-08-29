@@ -1,11 +1,15 @@
 // ui.js — построение и управление панелью UI (без изменения логики).
+/* global window, document */
+
 (() => {
     const U = (window.MMS && window.MMS.utils) || {};
-    const { qs, ce, escapeHTML, fmtDateTime, toISOUTC } = U;
+    const { qs, ce, escapeHTML, fmtDateTime } = U;
+
+    const C = (window.MMS && window.MMS.consts) || {};
+    const { PANEL_ID, ACTIVE_CLASS, TAB_ACTIVE_CLASS } = C;
 
     function createPanel(deps) {
         const {
-            // зависимости из content.js (пробрасываем, чтобы не дублировать логику)
             apiGetThread,
             fetchUsers,
             getRootPostId,
@@ -13,15 +17,13 @@
             normalizeThread,
             toAIJSON,
             extractPostIdFromString,
-            // константы
-            consts: { PANEL_ID, ACTIVE_CLASS, TAB_ACTIVE_CLASS },
         } = deps;
 
         // если уже создана — вернём существующий
         let existing = qs(`#${PANEL_ID}`);
         if (existing) return existing;
 
-        // --- DOM каркас (как было в content.js) ---
+        // --- DOM каркас ---
         const panel = ce("div", { id: PANEL_ID, className: `mms-panel` });
 
         // header
@@ -55,7 +57,7 @@
         body.append(secThread, secRaw, secAI);
         panel.append(header, body);
 
-        // --- состояние панели (без изменения структуры) ---
+        // --- состояние панели ---
         const state = {
             activeTab: "thread",  // thread | raw | ai
             rawThread: null,
@@ -63,7 +65,7 @@
             usersById: new Map(),
         };
 
-        // --- рендеры (ровно как были) ---
+        // --- рендеры ---
         function renderThread() {
             secThread.innerHTML = "";
             if (!state.messages.length) {
@@ -112,7 +114,7 @@
             }
         }
 
-        // --- утилиты UI (как было) ---
+        // --- утилиты UI ---
         let flashTimer = null;
         function flashTitle(msg) {
             const prev = title.textContent;
@@ -255,7 +257,7 @@
             overlay.addEventListener("click", onClick, true);
         }
 
-        // --- загрузка треда (как было в content.js внутри панели) ---
+        // --- загрузка треда ---
         async function refresh() {
             const rootId = getRootPostId();
             if (!rootId) {
@@ -305,9 +307,7 @@
         setActiveTab("thread");
         refresh();
 
-        // --- совместимость с существующим content.js ---
         panel.__mms__ = { refresh, setActiveTab, state, title, secThread, secRaw, secAI };
-
         return panel;
     }
 
