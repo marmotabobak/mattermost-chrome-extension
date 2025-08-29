@@ -15,9 +15,8 @@
         return u.searchParams.get('postId') || null;
     }
 
-    // --- API ------------------------------------------------------------------
+    // --- API base -------------------------------------------------------------
     async function getConfig() {
-        // MM_TOKEN теперь не обязателен для same-origin:
         return await chrome.storage.sync.get(['MM_TOKEN', 'SUMM_API', 'MM_HOST']);
     }
 
@@ -25,6 +24,13 @@
         return location.origin;
     }
 
+    function headersWithAuth(MM_TOKEN) {
+        const h = { 'Content-Type': 'application/json' };
+        if (MM_TOKEN) h['Authorization'] = 'Bearer ' + MM_TOKEN;
+        return h;
+    }
+
+    // --- Fetch thread ---------------------------------------------------------
     async function fetchThread(rootId) {
         const { MM_TOKEN, MM_HOST } = await getConfig();
         const base = (MM_HOST && MM_HOST.trim()) ? MM_HOST.replace(/\/$/, '') : currentBase();
@@ -34,13 +40,80 @@
             throw new Error('Для запроса к другому домену требуется MM Token (Options).');
         }
 
-        const headers = { 'Content-Type': 'application/json' };
-        if (MM_TOKEN) headers['Authorization'] = 'Bearer ' + MM_TOKEN;
-
         const url = `${base}/api/v4/posts/${rootId}/thread?per_page=200`;
-        const r = await fetch(url, { headers, credentials: 'include' });
+        const r = await fetch(url, { headers: headersWithAuth(MM_TOKEN), credentials: 'include' });
         if (!r.ok) throw new Error('Не удалось загрузить тред: ' + r.status);
-        return r.json(); // {order:[], posts:{}, ...}
+        const data = await r.json(); // {order:[], posts:{}, ...}
+
+        // Построим мапу userId -> username, используя /users/{id}
+        const userMap = await buildUserMap(Object.values(data.posts || {}), { base, MM_TOKEN });
+        data.__userMap = userMap;
+
+        return data;
+    }
+
+    // --- Users: GET /api/v4/users/{id} with concurrency limit -----------------
+    async function fetchUser(id, { base, MM_TOKEN }) {
+        const url = `${base}/api/v4/users/${encodeURIComponent(id)}`;
+        const r = await fetch(url, { headers: headersWithAuth(MM_TOKEN), credentials: 'include' });
+        if (!r.ok) throw new Error(`user ${id} http ${r.status}`);
+        return r.json(); // {id, username, first_name, last_name, nickname, ...}
+    }
+
+    async function buildUserMap(posts, ctx) {
+        const ids = Array.from(new Set(posts.map(p => p?.user_id).filter(Boolean)));
+        if (!ids.length) return {};
+
+        // ограничим параллелизм
+        const CONCURRENCY = 8;
+        const map = {};
+        let i = 0;
+
+        async function worker() {
+            while (i < ids.length) {
+                const idx = i++;
+                const uid = ids[idx];
+                try {
+                    const u = await fetchUser(uid, ctx);
+                    map[uid] = formatUser(u);
+                } catch {
+                    map[uid] = (uid || '').slice(0, 8); // fallback
+                }
+            }
+        }
+
+        const workers = Array.from({ length: Math.min(CONCURRENCY, ids.length) }, () => worker());
+        await Promise.all(workers);
+
+        return map;
+    }
+
+    function formatUser(u) {
+        // Приоритет: nickname > username > "First Last" > короткий id
+        const nick = (u.nickname || '').trim();
+        if (nick) return nick;
+        const uname = (u.username || '').trim();
+        if (uname) return uname;
+        const first = (u.first_name || '').trim();
+        const last = (u.last_name || '').trim();
+        const full = `${first} ${last}`.trim();
+        if (full) return full;
+        return (u.id || '').slice(0, 8);
+    }
+
+    // --- API: Summarizer ------------------------------------------------------
+    async function callSummarizer(text) {
+        const { SUMM_API } = await chrome.storage.sync.get(['SUMM_API']);
+        if (!SUMM_API) throw new Error('Не задан SUMM_API (Options).');
+
+        const r = await fetch(SUMM_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        if (!r.ok) throw new Error('Summarizer API error: ' + r.status);
+        const data = await r.json();
+        return data.summary || JSON.stringify(data);
     }
 
     // --- UI: floating button --------------------------------------------------
@@ -62,7 +135,7 @@
         return btn;
     }
 
-    // --- UI: side panel with messages ----------------------------------------
+    // --- UI helpers -----------------------------------------------------------
     function escapeHTML(s) {
         return String(s ?? '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -119,29 +192,34 @@
         const body = panel.querySelector('#mms-body');
         const order = Array.isArray(data.order) ? data.order : Object.keys(data.posts || {});
         const posts = data.posts || {};
+        const userMap = data.__userMap || {};
 
         const items = order.map(id => {
             const p = posts[id];
             if (!p) return '';
             const text = escapeHTML(p.message || '');
-            const user = escapeHTML(p.user_id || '');
+            const user = escapeHTML(userMap[p.user_id] || (p.user_id || '').slice(0, 8));
             const time = fmtTime(p.create_at);
             return `
         <div class="mms-msg">
           <div class="mms-meta">
-            <span class="mms-user">${user.slice(0, 8)}</span>
+            <span class="mms-user">${user}</span>
             <span class="mms-time">${time}</span>
           </div>
           <div class="mms-text">${text.replace(/\n/g, '<br/>')}</div>
         </div>`;
         }).join('');
 
+        const fullText = order.map(id => posts[id]?.message || '').join('\n\n');
+
         body.innerHTML = `
       <div style="display:flex; gap:8px; margin-bottom:8px;">
         <button id="mms-show-json">Raw JSON</button>
         <button id="mms-hide-json" style="display:none;">Hide JSON</button>
+        <button id="mms-run-summarizer">Summarize Thread</button>
       </div>
       <div id="mms-list">${items || '<em>Нет сообщений</em>'}</div>
+      <div id="mms-summary" style="margin-top:12px; padding:10px; border:1px solid #e5e7eb; border-radius:8px; display:none;"></div>
       <pre data-json style="display:none; margin-top:10px; padding:8px; background:#f6f8fa; border:1px solid #e5e7eb; border-radius:8px; max-height:30vh; overflow:auto;">${escapeHTML(JSON.stringify(data, null, 2))}</pre>
       <style>
         #${PANEL_ID} .mms-msg{padding:8px 6px;border-bottom:1px dashed #eee;}
@@ -161,6 +239,22 @@
             body.querySelector('pre[data-json]').style.display = 'none';
             body.querySelector('#mms-show-json').style.display = 'inline-block';
             body.querySelector('#mms-hide-json').style.display = 'none';
+        };
+
+        body.querySelector('#mms-run-summarizer').onclick = async () => {
+            const btn = body.querySelector('#mms-run-summarizer');
+            const box = body.querySelector('#mms-summary');
+            btn.disabled = true; btn.textContent = 'Summarizing…';
+            try {
+                const summary = await callSummarizer(fullText);
+                box.style.display = 'block';
+                box.innerHTML = `<strong>Summary:</strong><br/>${escapeHTML(summary).replace(/\n/g, '<br/>')}`;
+            } catch (e) {
+                box.style.display = 'block';
+                box.innerHTML = `<span style="color:red;">Ошибка summarizer: ${escapeHTML(e.message)}</span>`;
+            } finally {
+                btn.disabled = false; btn.textContent = 'Summarize Thread';
+            }
         };
     }
 
