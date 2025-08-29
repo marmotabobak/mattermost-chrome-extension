@@ -23,7 +23,7 @@
   "content_scripts": [
     {
       "matches": ["https://chatzone.o3t.ru/*"],
-      "js": ["utils.js", "content.js"],
+      "js": ["utils.js", "ui.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
