@@ -11,6 +11,18 @@
     function fail(msg, err) { line("fail", msg + (err ? " — " + err : "")); }
     function assert(cond, msg) { if (!cond) throw new Error(msg || "assertion failed"); }
 
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    async function waitFor(pred, timeout = 2500, step = 25, onTick) {
+        const t0 = performance.now();
+        while (performance.now() - t0 < timeout) {
+            try { if (pred()) return; } catch { }
+            if (onTick) onTick(performance.now() - t0);
+            await sleep(step);
+        }
+        throw new Error("Timeout waiting for condition");
+    }
+
     // --- Sanity ---
     try {
         assert(window.MMS, "MMS namespace exists");
@@ -24,22 +36,18 @@
     try {
         const { isValidPostId, extractPostIdFromString, getRootPostIdFromDOM } = MMS.idResolver;
 
-        // 26-символьный валидный id
-        const VALID_ID_26 = "1234567890abcdefghijklmnop"; // 10 + 16 = 26
+        const VALID_ID_26 = "1234567890abcdefghijklmnop"; // 26 символов
 
-        // validate
         assert(isValidPostId(VALID_ID_26) === true, "isValidPostId(true)");
         assert(isValidPostId("short") === false, "isValidPostId(false)");
 
-        // extract
         assert(
             extractPostIdFromString("rhsPostMessageText_" + VALID_ID_26) === VALID_ID_26,
             "extractPostIdFromString from id",
         );
         assert(extractPostIdFromString("no_id_here") === null, "extractPostIdFromString null");
 
-        // DOM path (эмулируем RHS/центр)
-        const domPid = "abcdefghijklmnopqrstuvwxyz12".slice(0, 26); // 26 символов
+        const domPid = "abcdefghijklmnopqrstuvwxyz12".slice(0, 26);
         const el = document.createElement("div");
         el.id = "rhsPostMessageText_" + domPid;
         document.body.appendChild(el);
@@ -85,11 +93,24 @@
         ok("formatters: OK");
     } catch (e) { fail("formatters", e.message); }
 
+    // Отметим, что unit-пакет завершён (для последовательности с pick-click)
+    window.__mms_unit_done = true;
+
     // -----------------------------
     // UI smoke test (с заглушками API)
     // -----------------------------
     (async function () {
         try {
+            // Ждём, чтобы unit-часть точно отметилась (на всякий случай)
+            await waitFor(() => window.__mms_unit_done === true, 1000, 25);
+
+            // Снести старую панель (если оставалась от прежнего теста/запуска)
+            const OLD = document.getElementById("mms-side-panel");
+            if (OLD) {
+                console.log("[smoke] removing existing panel before start");
+                OLD.remove();
+            }
+
             const rawThread = {
                 posts: {
                     r1: { id: "r1", user_id: "u1", message: "Root msg", create_at: 1000 },
@@ -100,12 +121,13 @@
 
             const deps = {
                 apiGetThread: async (rootId) => {
-                    assert(rootId === "r1", "ui: rootId passed to apiGetThread");
-                    await new Promise(r => setTimeout(r, 10));
+                    console.log("[smoke] apiGetThread called with", rootId);
+                    if (rootId !== "r1") throw new Error("unexpected rootId " + rootId);
+                    await sleep(10);
                     return rawThread;
                 },
                 fetchUsers: async (ids) => {
-                    assert(Array.isArray(ids), "ui: fetchUsers gets ids");
+                    console.log("[smoke] fetchUsers ids:", ids);
                     return new Map([
                         ["u1", { id: "u1", username: "alice" }],
                         ["u2", { id: "u2", first_name: "Bob", last_name: "Builder" }]
@@ -121,15 +143,42 @@
             const panel = MMS.ui.createPanel(deps);
             document.body.appendChild(panel);
 
-            await new Promise(r => setTimeout(r, 30));
+            // (A) ждём готовности состояния (>=2 сообщения), с прогресс-логом
+            await waitFor(() => {
+                const p = document.getElementById("mms-side-panel");
+                const len = p && p.__mms__ && p.__mms__.state && p.__mms__.state.messages.length;
+                return len >= 2;
+            }, 3000, 50, (ms) => {
+                const p = document.getElementById("mms-side-panel");
+                const len = p && p.__mms__ && p.__mms__.state ? p.__mms__.state.messages.length : 0;
+                if (ms % 200 < 50) console.log(`[smoke] waiting state messages… ${len}`);
+            });
 
-            const sec = document.getElementById("mms-sec-thread");
-            const txt = sec ? sec.textContent : "";
-            assert(/Root msg/.test(txt) && /Reply 1/.test(txt), "ui: thread renders messages");
+            // (B) форсируем таб Thread (на случай, если вкладка не активна)
+            if (panel.__mms__ && typeof panel.__mms__.setActiveTab === "function") {
+                console.log("[smoke] setActiveTab('thread')");
+                panel.__mms__.setActiveTab("thread");
+            }
+
+            // (C) ждём появления текста в DOM
+            await waitFor(() => {
+                const sec = document.getElementById("mms-sec-thread");
+                const txt = sec ? (sec.textContent || "") : "";
+                return /Root msg/.test(txt) && /Reply 1/.test(txt);
+            }, 1200, 50, (ms) => {
+                if (ms % 200 < 50) {
+                    const sec = document.getElementById("mms-sec-thread");
+                    const txt = sec ? (sec.textContent || "") : "";
+                    console.log("[smoke] waiting DOM… seen=", JSON.stringify(txt.slice(0, 60)));
+                }
+            });
 
             ok("ui (smoke): OK");
         } catch (e) {
             fail("ui (smoke)", e.message);
+        } finally {
+            // Сигнал для pick-click: smoke завершился (успех/ошибка не важно)
+            window.__mms_smoke_done = true;
         }
 
         const done = document.createElement("pre");

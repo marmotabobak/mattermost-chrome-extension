@@ -180,10 +180,13 @@
             secRaw.textContent = "{}";
             secAI.textContent = "[]";
 
+            // Подготовим контент секции Thread
+            secThread.innerHTML = "";
             const p = document.createElement("div");
             p.className = "mms-text";
             p.style.marginTop = "8px";
-            p.textContent = "Мы не смогли определить тред из URL. Откройте тред в правой панели или выберите сообщение вручную.";
+            p.textContent =
+                "Мы не смогли определить тред из URL. Откройте тред в правой панели или выберите сообщение вручную.";
 
             const pickBtn = document.createElement("button");
             pickBtn.className = "mms-btn";
@@ -191,9 +194,17 @@
             pickBtn.title = "Кликните по любому сообщению треда";
             pickBtn.addEventListener("click", () => pickRootByClick());
 
-            secThread.innerHTML = "";
             secThread.append(p, document.createElement("br"), pickBtn);
-            setActiveTab("thread");
+
+            // ВАЖНО: НЕ вызывать setActiveTab('thread'), чтобы не затереть контент.
+            // Просто вручную отметить активную вкладку/секцию.
+            state.activeTab = "thread";
+            tabThread.classList.add(TAB_ACTIVE_CLASS);
+            tabRaw.classList.remove(TAB_ACTIVE_CLASS);
+            tabAI.classList.remove(TAB_ACTIVE_CLASS);
+            secThread.classList.add(ACTIVE_CLASS);
+            secRaw.classList.remove(ACTIVE_CLASS);
+            secAI.classList.remove(ACTIVE_CLASS);
         }
 
         function pickRootByClick() {
@@ -246,6 +257,7 @@
                     state.messages = messages;
                     state.usersById = await fetchUsers(userIds, { concurrency: 6 });
                     setActiveTab(state.activeTab);
+                    title.textContent = "Thread Tools";
                     flashTitle("Готово");
                 } catch (err) {
                     console.error(err);
@@ -281,6 +293,7 @@
                 else if (state.activeTab === "raw") renderRaw();
                 else renderAI();
 
+                title.textContent = "Thread Tools";
                 flashTitle("Готово");
             } catch (e) {
                 console.error("Thread load error:", e);

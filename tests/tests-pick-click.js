@@ -13,11 +13,27 @@
     function assert(cond, msg) { if (!cond) throw new Error(msg || "assertion failed"); }
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    async function waitFor(pred, timeout = 3000, step = 25) {
+        const t0 = performance.now();
+        while (performance.now() - t0 < timeout) {
+            try { if (pred()) return; } catch { }
+            await sleep(step);
+        }
+        throw new Error("Timeout waiting for condition");
+    }
+
     (async function run() {
         try {
-            assert(window.MMS && MMS.ui, "MMS.ui loaded");
+            // Ждём, когда smoke-тест завершится, чтобы не пересекаться
+            await waitFor(() => window.__mms_smoke_done === true, 5000, 25);
 
-            // Подготовим «сырой» тред, который вернёт наш фейковый API
+            // Снести панель, если осталась от smoke
+            const OLD = document.getElementById("mms-side-panel");
+            if (OLD) {
+                console.log("[pick] removing panel before start");
+                OLD.remove();
+            }
+
             const RAW = {
                 posts: {
                     r1: { id: "r1", user_id: "u1", message: "Root via click", create_at: 1000 },
@@ -26,24 +42,24 @@
                 order: ["r1", "c1"]
             };
 
-            // 26-символьный фейковый postId, который «кликнем» по оверлею
-            const PICK_ID = "1234567890abcdefghijklmn"; // длина 26
+            const PICK_ID = "1234567890abcdefghijklmnop"; // 26
 
-            // Заглушки зависимостей, как их ждёт UI.createPanel
             let calledWithId = null;
             const deps = {
                 apiGetThread: async (id) => {
                     calledWithId = id;
+                    console.log("[pick] apiGetThread called with", id);
                     await sleep(10);
                     return RAW;
                 },
                 fetchUsers: async (_ids) => {
+                    console.log("[pick] fetchUsers");
                     return new Map([
                         ["u1", { id: "u1", username: "alice" }],
                         ["u2", { id: "u2", first_name: "Bob", last_name: "Builder" }]
                     ]);
                 },
-                // Возвращаем null, чтобы UI показал "RootId не найден" + кнопку "Выбрать кликом"
+                // Возвращаем null — чтобы показать кнопку "Выбрать кликом"
                 getRootPostId: () => null,
                 formatDisplayName: MMS.formatters.formatDisplayName,
                 normalizeThread: MMS.formatters.normalizeThread,
@@ -51,41 +67,42 @@
                 extractPostIdFromString: MMS.idResolver.extractPostIdFromString
             };
 
-            // Создаём панель
+            console.log("[pick] createPanel");
             const panel = MMS.ui.createPanel(deps);
             document.body.appendChild(panel);
-            await sleep(20); // дать времени первичному рендеру
+            await sleep(50);
 
-            // Находим кнопку "Выбрать кликом" и жмём
-            const pickBtn = panel.querySelector(".mms-btn");
-            assert(pickBtn && /Выбрать кликом/.test(pickBtn.textContent), "pick button visible");
+            // Находим кнопку "Выбрать кликом"
+            const pickBtn = Array.from(panel.querySelectorAll(".mms-btn"))
+                .find(b => /Выбрать кликом/.test(b.textContent || ""));
+            assert(pickBtn, "pick button visible");
+            console.log("[pick] click pick button");
             pickBtn.click();
-            await sleep(10); // дождаться появления оверлея
+            await sleep(20);
 
-            // Ищем оверлей по title (как в ui.js)
+            // Ищем оверлей
             const overlays = Array.from(document.getElementsByTagName("div"))
                 .filter(el => el.title === "Кликните по сообщению треда… (Esc — отмена)");
             assert(overlays.length === 1, "overlay appeared");
             const overlay = overlays[0];
 
-            // Добавляем внутрь оверлея «подложку» с id, содержащим postId
-            // (в реальности клик по оверлею не видит подложку, но для теста
-            //  создаём дочерний элемент внутри, чтобы e.target был с нужным id)
+            // Добавляем подложку и кликаем
             const fakeMsg = document.createElement("div");
             fakeMsg.id = "rhsPostMessageText_" + PICK_ID;
             overlay.appendChild(fakeMsg);
 
-            // Генерируем клик по дочернему элементу — обработчик поднимется и найдёт id
             const evt = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
+            console.log("[pick] dispatch click on fakeMsg");
             fakeMsg.dispatchEvent(evt);
 
-            // Дать UI время сделать apiGetThread + fetchUsers + рендер
-            await sleep(40);
+            // Ждём загрузки и рендера
+            await waitFor(() => {
+                const p = document.getElementById("mms-side-panel");
+                return p && p.__mms__ && p.__mms__.state && p.__mms__.state.messages.length >= 2;
+            }, 2000, 50);
 
-            // Проверяем, что вызвали API с нашим PICK_ID
             assert(calledWithId === PICK_ID, "apiGetThread called with chosen id");
 
-            // Проверяем, что отрендерился тред
             const sec = document.getElementById("mms-sec-thread");
             const txt = sec ? sec.textContent : "";
             assert(/Root via click/.test(txt) && /Reply via click/.test(txt), "thread rendered after pick");
