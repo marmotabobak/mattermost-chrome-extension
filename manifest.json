@@ -1,37 +1,27 @@
 {
-    "name": "Mattermost Summarizer",
-    "version": "0.2.1",
-    "manifest_version": 3,
-    "description": "Adds a Summarize button on Mattermost thread pages and fetches the thread.",
-    "icons": {
-        "16": "icons/icon16.png",
-        "48": "icons/icon48.png",
-        "128": "icons/icon128.png"
-    },
-    "permissions": [
-        "storage",
-        "activeTab",
-        "scripting"
-    ],
-    "host_permissions": [
-        "<all_urls>"
-    ],
-    "background": {
-        "service_worker": "background.js",
-        "type": "module"
-    },
-    "content_scripts": [
-        {
-            "matches": [
-                "<all_urls>"
-            ],
-            "js": [
-                "content.js"
-            ],
-            "run_at": "document_idle"
-        }
-    ],
-    "action": {
-        "default_title": "Mattermost Summarizer"
+  "manifest_version": 3,
+  "name": "Mattermost Thread Summarizer",
+  "version": "1.0.0",
+  "action": {
+    "default_title": "Summarize"
+  },
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["https://*/", "http://*/"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
+  ],
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["ai_prompt.txt"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
