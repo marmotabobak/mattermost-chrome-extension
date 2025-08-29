@@ -1,427 +1,634 @@
-(function () {
-  const BTN_ID = 'mm-summarize-btn';
-  const PANEL_ID = 'mm-summarize-panel';
+// content.js — MV3 content script
+// Работает на страницах Mattermost (например, chatzone.o3t.ru/*).
+// Делает запросы ТОЛЬКО на текущий origin, с credentials: 'include'.
+// Никаких PAT, настроек и внешнего Summarizer.
 
-  // -------- URL helpers --------
-  function getPostIdFromURL() {
-    const p = location.pathname;
-    let m = p.match(/\/pl\/([a-z0-9]+)/i);
-    if (m) return m[1];
-    m = p.match(/\/threads\/([a-z0-9]+)/i);
-    if (m) return m[1];
-    m = p.match(/\/posts\/([a-z0-9]+)/i);
-    if (m) return m[1];
-    const u = new URL(location.href);
-    return u.searchParams.get('postId') || null;
-  }
+(() => {
+  "use strict";
 
-  // -------- Config --------
-  async function getConfig() {
-    const data = await chrome.storage.sync.get(['MM_TOKEN', 'MM_HOST', 'SUMM_API']);
-    return {
-      MM_TOKEN: data.MM_TOKEN || '',
-      MM_HOST: data.MM_HOST || '',
-      SUMM_API: data.SUMM_API || ''
-    };
-  }
-  const currentBase = () => location.origin;
-  function headersWithAuth(MM_TOKEN) {
-    const h = { 'Content-Type': 'application/json' };
-    if (MM_TOKEN) h['Authorization'] = 'Bearer ' + MM_TOKEN;
-    return h;
-  }
+  /*************************************************************************
+   * Константы и утилиты
+   *************************************************************************/
+  const ALLOWED_HOSTS = ["chatzone.o3t.ru"]; // при необходимости добавь домены
+  if (!ALLOWED_HOSTS.includes(location.hostname)) return;
 
-  // -------- Fetch thread --------
-  async function fetchThread(rootId) {
-    const { MM_TOKEN, MM_HOST } = await getConfig();
-    const base = (MM_HOST && MM_HOST.trim()) ? MM_HOST.replace(/\/$/, '') : currentBase();
-    const isSameOrigin = base === location.origin;
+  const BTN_ID = "mms-fab";
+  const PANEL_ID = "mms-side-panel";
+  const PANEL_ROOT_CLASS = "mms-panel";
+  const ACTIVE_CLASS = "mms-active";
+  const TAB_ACTIVE_CLASS = "mms-tab-active";
 
-    if (!MM_TOKEN && !isSameOrigin) {
-      throw new Error('Для запроса к другому домену требуется MM Token (Options).');
+  const BASE = location.origin;
+
+  const qs = (sel, root = document) => root.querySelector(sel);
+  const ce = (tag, props = {}, children = []) => {
+    const el = document.createElement(tag);
+    Object.assign(el, props);
+    for (const c of children) el.append(c);
+    return el;
+  };
+  const escapeHTML = (s) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const fmtDateTime = (ms) => {
+    try {
+      return new Date(ms).toLocaleString();
+    } catch {
+      return String(ms);
     }
+  };
+  const toISOUTC = (ms) => new Date(ms).toISOString().replace("T", " ").replace("Z", " UTC");
 
-    const url = `${base}/api/v4/posts/${rootId}/thread?per_page=200`;
-    const r = await fetch(url, { headers: headersWithAuth(MM_TOKEN), credentials: 'include' });
-    if (!r.ok) throw new Error('Не удалось загрузить тред: ' + r.status);
-    const data = await r.json();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    data.__userMap = await buildUserMap(Object.values(data.posts || {}), { base, MM_TOKEN });
-    return data;
+  /*************************************************************************
+   * Сеть (same-origin)
+   *************************************************************************/
+  async function fetchJSON(path, init = {}) {
+    const url = path.startsWith("http") ? path : BASE + (path.startsWith("/") ? path : "/" + path);
+    const res = await fetch(url, {
+      credentials: "include", // кука сессии приедет автоматически
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...(init.headers || {}),
+      },
+    });
+
+    const text = await res.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch {}
+
+    if (!res.ok) {
+      const msg =
+        (json && (json.message || json.error)) ||
+        text ||
+        `HTTP ${res.status} ${res.statusText}`;
+      const err = new Error(msg);
+      err.status = res.status;
+      err.body = text;
+      throw err;
+    }
+    return json;
   }
 
-  // -------- Users batching --------
-  async function buildUserMap(postList, { base, MM_TOKEN }) {
-    const ids = Array.from(new Set(postList.map(p => p.user_id).filter(Boolean)));
-    const map = {};
-    const CONCURRENCY = 4;
-    let idx = 0;
+  async function apiGetThread(rootId, perPage = 200) {
+    return fetchJSON(`/api/v4/posts/${encodeURIComponent(rootId)}/thread?per_page=${perPage}`);
+  }
 
+  async function apiGetUser(id) {
+    return fetchJSON(`/api/v4/users/${encodeURIComponent(id)}`);
+  }
+
+  async function fetchUsers(ids, { concurrency = 6 } = {}) {
+    const uniq = Array.from(new Set(ids)).filter(Boolean);
+    const results = new Map();
+    let i = 0;
     async function worker() {
-      while (idx < ids.length) {
-        const uid = ids[idx++];
+      while (i < uniq.length) {
+        const id = uniq[i++];
         try {
-          const ru = await fetch(`${base}/api/v4/users/${uid}`, {
-            headers: headersWithAuth(MM_TOKEN),
-            credentials: 'include'
-          });
-          if (!ru.ok) throw new Error('user ' + ru.status);
-          const u = await ru.json();
-          map[uid] = formatUser(u);
-        } catch {
-          map[uid] = (uid || '').slice(0, 8);
+          const u = await apiGetUser(id);
+          results.set(id, u);
+        } catch (e) {
+          console.warn("User fetch failed:", id, e);
+          results.set(id, { id, username: id.slice(0, 8) });
         }
       }
     }
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
-    return map;
+    const workers = Array.from({ length: Math.min(concurrency, uniq.length) }, () => worker());
+    await Promise.all(workers);
+    return results;
   }
 
-  function formatUser(u) {
-    const nick = (u.nickname || '').trim();
-    if (nick) return nick;
-    const uname = (u.username || '').trim();
-    if (uname) return uname;
-    const first = (u.first_name || '').trim();
-    const last = (u.last_name || '').trim();
+  /*************************************************************************
+   * Извлечение rootId (URL + DOM + fallback-клик)
+   *************************************************************************/
+  function isValidPostId(id) {
+    return typeof id === "string" && /^[a-z0-9]{26}$/i.test(id);
+  }
+
+  function extractPostIdFromString(s) {
+    if (!s) return null;
+    const m = s.match(/([a-z0-9]{26})/i);
+    return m ? m[1] : null;
+  }
+
+  function getRootPostIdFromDOM() {
+    const sel = [
+      // RHS (правая панель)
+      '[id^="rhsPostMessageText_"]',
+      '[id^="rhsRootPost_"]',
+      '.SidebarRight [id^="post_"]',
+      // Центр
+      '[id^="postMessageText_"]',
+      '[id^="postContent_"]',
+      '[id^="post_"]',
+    ];
+    for (const s of sel) {
+      const el = document.querySelector(s);
+      if (!el) continue;
+      const id =
+        extractPostIdFromString(el.id) ||
+        extractPostIdFromString(el.getAttribute("data-testid") || "");
+      if (id) return id;
+    }
+    // Иногда id есть в ссылке "Скопировать ссылку"
+    const link = document.querySelector('a[href*="/pl/"]');
+    if (link) {
+      const m = link.getAttribute("href").match(/\/pl\/([a-z0-9]{26})/i);
+      if (m) return m[1];
+    }
+    return null;
+  }
+
+  function getRootPostId() {
+    const url = new URL(location.href);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const grabNext = (arr, key) => {
+      const i = arr.indexOf(key);
+      return i >= 0 && arr[i + 1] ? arr[i + 1] : null;
+    };
+    const fromUrl =
+      grabNext(parts, "pl") ||
+      (parts[0] === "_redirect" && grabNext(parts.slice(1), "pl")) ||
+      grabNext(parts, "thread") ||
+      grabNext(parts, "posts") ||
+      url.searchParams.get("postId");
+
+    if (isValidPostId(fromUrl)) return fromUrl;
+
+    const domId = getRootPostIdFromDOM();
+    if (isValidPostId(domId)) return domId;
+
+    return null;
+  }
+
+  /*************************************************************************
+   * Нормализация
+   *************************************************************************/
+  function normalizeThread(raw) {
+    const postsById = raw && raw.posts ? raw.posts : {};
+    const order = Array.isArray(raw && raw.order) ? raw.order : Object.keys(postsById);
+
+    const messages = order
+      .map((id) => postsById[id])
+      .filter(Boolean)
+      .map((p) => ({
+        id: p.id,
+        user_id: p.user_id,
+        message: p.message || "",
+        create_at: p.create_at || 0,
+        root_id: p.root_id || p.id,
+        type: p.type || "",
+      }))
+      .sort((a, b) => a.create_at - b.create_at);
+
+    const userIds = messages.map((m) => m.user_id).filter(Boolean);
+    return { messages, userIds };
+  }
+
+  function formatDisplayName(u) {
+    if (!u) return "Unknown";
+    if (u.nickname) return u.nickname;
+    if (u.username) return u.username;
+    const first = (u.first_name || "").trim();
+    const last = (u.last_name || "").trim();
     const full = `${first} ${last}`.trim();
     if (full) return full;
-    return (u.id || '').slice(0, 8);
+    if (u.id) return u.id.slice(0, 8);
+    return "Unknown";
   }
 
-  // -------- Summarizer --------
-  async function callSummarizer(text) {
-    const { SUMM_API } = await chrome.storage.sync.get(['SUMM_API']);
-    if (!SUMM_API) throw new Error('Не задан SUMM_API (Options).');
-
-    const r = await fetch(SUMM_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
-    if (!r.ok) throw new Error('Summarizer HTTP ' + r.status);
-    const j = await r.json();
-    return j.summary || j.result || JSON.stringify(j);
+  function toAIJSON(messages, usersById) {
+    return messages.map((m) => ({
+      username: formatDisplayName(usersById.get(m.user_id)),
+      ts: toISOUTC(m.create_at),
+      message: m.message || "",
+      post_id: m.id,
+    }));
   }
 
-  // -------- Utils --------
-  const escapeHTML = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  function fmtTime(ms) {
-    const d = new Date(ms || 0);
-    return d.toLocaleString();
-  }
-  function fmtTsForAi(ms) {
-    const d = new Date(ms || 0);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  }
+  /*************************************************************************
+   * Стили UI (кнопка, панель, табы)
+   *************************************************************************/
+  function ensureStyles() {
+    if (qs(`#${PANEL_ID}-styles`)) return;
+    const style = ce("style", { id: `${PANEL_ID}-styles` });
+    style.textContent = `
+      .${PANEL_ROOT_CLASS} {
+        position: fixed;
+        top: 48px;
+        right: 16px;
+        width: min(720px, 48vw);
+        height: 70vh;
+        z-index: 999999;
+        background: #fff;
+        color: #1f2937;
+        border: 1px solid rgba(0,0,0,0.1);
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        display: none;
+        flex-direction: column;
+        overflow: hidden;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Inter, Arial, sans-serif;
+      }
+      .${PANEL_ROOT_CLASS}.${ACTIVE_CLASS} { display: flex; }
 
-  // -------- Panel HTML --------
-  function buildPanelHTML() {
-    return `
-      <div id="mms-header">
-        <strong style="font-weight:600;">Thread preview</strong>
-        <div style="flex:1"></div>
-        <div id="mms-modes" role="tablist" aria-label="Режим вывода">
-          <button class="mms-tab mms-active" data-mode="thread" role="tab" aria-selected="true">Thread</button>
-          <button class="mms-tab" data-mode="raw" role="tab" aria-selected="false">Raw JSON</button>
-          <button class="mms-tab" data-mode="ai" role="tab" aria-selected="false">JSON для AI</button>
-        </div>
-        <div id="mms-actions" style="margin-left:8px; display:flex; gap:6px;">
-          <button id="mms-refresh" title="Обновить данные треда">Refresh</button>
-          <button id="mms-copy-current" title="Скопировать текущее представление">Копировать</button>
-          <button id="mms-download-current" title="Скачать текущее представление">Скачать</button>
-          <button id="mms-copy-prompt" title="Скопировать промпт для нейронки">Скопировать промпт</button>
-          <button id="mms-close" title="Закрыть">✕</button>
-        </div>
-      </div>
-      <div id="mms-body"><em>Пусто</em></div>
-      <style id="mms-style">
-        #${PANEL_ID} { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif }
-        #${PANEL_ID} button{padding:6px 10px;border:1px solid #374151;border-radius:8px;background:#111827;color:#e5e7eb;cursor:pointer}
-        #${PANEL_ID} button:hover{background:#1f2937}
-        #${PANEL_ID} .mms-tab{border-radius:16px;padding:6px 10px;font-size:12px;}
-        #${PANEL_ID} .mms-tab.mms-active{background:#2563eb;border-color:#2563eb;color:white}
-        #${PANEL_ID} pre{background:#0f172a;color:#e5e7eb;border:1px solid #1f2937;border-radius:10px;padding:10px}
-        #${PANEL_ID} .mms-msg{padding:8px 6px;border-bottom:1px dashed #30363d;}
-        #${PANEL_ID} .mms-meta{font-size:12px;color:#9ca3af;display:flex;gap:8px;margin-bottom:4px;}
-        #${PANEL_ID} .mms-user{font-weight:600;color:#e5e7eb}
-        #${PANEL_ID} .mms-text{white-space:normal;word-break:break-word;}
-      </style>
+      .mms-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid rgba(0,0,0,0.08);
+        background: #f8fafc;
+      }
+      .mms-title { font-weight: 600; margin-right: auto; }
+
+      .mms-btn {
+        border: 1px solid rgba(0,0,0,0.12);
+        background: white;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .mms-btn[disabled] { opacity: .6; cursor: default; }
+
+      .mms-tabs { display: flex; gap: 6px; margin-left: 8px; }
+      .mms-tab {
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: transparent;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .mms-tab.${TAB_ACTIVE_CLASS} {
+        background: #eef2ff;
+        border-color: #c7d2fe;
+      }
+
+      .mms-body { flex: 1; overflow: auto; background: #fff; }
+      .mms-section { display: none; padding: 10px 14px; }
+      .mms-section.${ACTIVE_CLASS} { display: block; }
+
+      .mms-msg { border-bottom: 1px dashed rgba(0,0,0,0.08); padding: 8px 0; }
+      .mms-msg:last-child { border-bottom: none; }
+      .mms-meta { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+      .mms-text { white-space: pre-wrap; word-break: break-word; }
+
+      #${BTN_ID} {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 999999;
+        background: #111827;
+        color: #fff;
+        border: none;
+        border-radius: 999px;
+        padding: 10px 14px;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        cursor: pointer;
+        font-size: 13px;
+      }
     `;
+    document.head.append(style);
   }
 
-  function ensurePanel() {
-    let panel = document.getElementById(PANEL_ID);
-    if (!panel) {
-      panel = document.createElement('div');
-      panel.id = PANEL_ID;
-      Object.assign(panel.style, {
-        position: 'fixed', top: '64px', right: '16px', width: '520px', height: '60vh',
-        background: '#111827', color: '#e5e7eb', zIndex: 1000000, borderRadius: '12px',
-        border: '1px solid #1f2937', boxShadow: '0 12px 32px rgba(0,0,0,.35)',
-        display: 'flex', flexDirection: 'column', overflow: 'hidden'
-      });
-      document.documentElement.appendChild(panel);
+  /*************************************************************************
+   * Панель, табы, кнопки (Refresh / Copy / Download)
+   *************************************************************************/
+  function ensureButton() {
+    if (qs(`#${BTN_ID}`)) return;
+    const btn = ce("button", { id: BTN_ID, title: "Показать/скрыть панель треда" });
+    btn.textContent = "Thread Tools";
+    btn.addEventListener("click", togglePanel);
+    document.body.append(btn);
+  }
+
+  function buildPanel() {
+    let panel = qs(`#${PANEL_ID}`);
+    if (panel) return panel;
+
+    panel = ce("div", { id: PANEL_ID, className: `${PANEL_ROOT_CLASS}` });
+
+    // header
+    const title = ce("div", { className: "mms-title", textContent: "Thread Tools" });
+    const btnRefresh = ce("button", { className: "mms-btn", textContent: "Refresh", title: "Обновить" });
+    const btnCopy = ce("button", { className: "mms-btn", textContent: "Copy", title: "Скопировать текущий вид" });
+    const btnDownload = ce("button", { className: "mms-btn", textContent: "Download", title: "Скачать текущий вид" });
+
+    const tabs = ce("div", { className: "mms-tabs", role: "tablist", "aria-label": "Thread views" });
+    const tabThread = ce("button", { className: "mms-tab", textContent: "Thread", role: "tab", "aria-selected": "true" });
+    const tabRaw = ce("button", { className: "mms-tab", textContent: "Raw JSON", role: "tab" });
+    const tabAI = ce("button", { className: "mms-tab", textContent: "JSON для AI", role: "tab" });
+
+    const header = ce("div", { className: "mms-header" }, [title, btnRefresh, btnCopy, btnDownload, tabs, tabThread, tabRaw, tabAI]);
+
+    // body
+    const body = ce("div", { className: "mms-body" });
+    const secThread = ce("div", { className: `mms-section ${ACTIVE_CLASS}`, id: "mms-sec-thread" });
+    const secRaw = ce("pre", { className: "mms-section", id: "mms-sec-raw" });
+    const secAI = ce("pre", { className: "mms-section", id: "mms-sec-ai" });
+
+    body.append(secThread, secRaw, secAI);
+    panel.append(header, body);
+    document.body.append(panel);
+
+    // Состояние панели
+    const state = {
+      activeTab: "thread",  // thread | raw | ai
+      rawThread: null,
+      messages: [],
+      usersById: new Map(),
+    };
+
+    // Переключение табов
+    function setActiveTab(name) {
+      state.activeTab = name;
+      for (const el of [tabThread, tabRaw, tabAI]) el.classList.remove(TAB_ACTIVE_CLASS);
+      for (const el of [secThread, secRaw, secAI]) el.classList.remove(ACTIVE_CLASS);
+
+      if (name === "thread") {
+        tabThread.classList.add(TAB_ACTIVE_CLASS);
+        secThread.classList.add(ACTIVE_CLASS);
+        renderThread();
+      } else if (name === "raw") {
+        tabRaw.classList.add(TAB_ACTIVE_CLASS);
+        secRaw.classList.add(ACTIVE_CLASS);
+        renderRaw();
+      } else {
+        tabAI.classList.add(TAB_ACTIVE_CLASS);
+        secAI.classList.add(ACTIVE_CLASS);
+        renderAI();
+      }
     }
-    if (!panel.querySelector('#mms-header') || !panel.querySelector('#mms-body')) {
-      panel.innerHTML = buildPanelHTML();
-      const header = panel.querySelector('#mms-header');
-      Object.assign(header.style, {
-        display: 'flex', alignItems: 'center', gap: '8px',
-        padding: '10px 12px', borderBottom: '1px solid #1f2937', background: '#0b1220', position:'sticky', top:'0'
-      });
-      const body = panel.querySelector('#mms-body');
-      Object.assign(body.style, { padding: '10px', overflow: 'auto', lineHeight: '1.35', background:'#0b1220' });
+
+    tabThread.addEventListener("click", () => setActiveTab("thread"));
+    tabRaw.addEventListener("click", () => setActiveTab("raw"));
+    tabAI.addEventListener("click", () => setActiveTab("ai"));
+
+    // Кнопки действий
+    btnRefresh.addEventListener("click", () => refresh());
+    btnCopy.addEventListener("click", () => copyCurrent());
+    btnDownload.addEventListener("click", () => downloadCurrent());
+
+    // Рендеры
+    function renderThread() {
+      secThread.innerHTML = "";
+      if (!state.messages.length) {
+        secThread.textContent = "Нет данных. Нажмите Refresh.";
+        return;
+      }
+      for (const m of state.messages) {
+        const u = state.usersById.get(m.user_id);
+        const name = formatDisplayName(u);
+        const meta = ce("div", { className: "mms-meta", innerHTML: `${escapeHTML(name)} • ${escapeHTML(fmtDateTime(m.create_at))}` });
+        const text = ce("div", { className: "mms-text", innerHTML: escapeHTML(m.message) });
+        const item = ce("div", { className: "mms-msg" }, [meta, text]);
+        secThread.append(item);
+      }
     }
-    attachDelegatedHandlers(panel);
+
+    function renderRaw() {
+      secRaw.textContent = state.rawThread ? JSON.stringify(state.rawThread, null, 2) : "{}";
+    }
+
+    function renderAI() {
+      const ai = toAIJSON(state.messages, state.usersById);
+      secAI.textContent = JSON.stringify(ai, null, 2);
+    }
+
+    // Копирование/скачивание текущего вида
+    function getCurrentPayloadAndName() {
+      const rootId = getRootPostId() || "thread";
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      if (state.activeTab === "thread") {
+        const lines = state.messages.map((m) => {
+          const u = state.usersById.get(m.user_id);
+          const name = formatDisplayName(u);
+          return `### ${name} — ${fmtDateTime(m.create_at)}\n${m.message || ""}\n`;
+        });
+        return {
+          filename: `mm-thread_${rootId}_${ts}.md`,
+          mime: "text/markdown",
+          content: lines.join("\n")
+        };
+      }
+      if (state.activeTab === "raw") {
+        return {
+          filename: `mm-thread_${rootId}_${ts}_raw.json`,
+          mime: "application/json",
+          content: JSON.stringify(state.rawThread || {}, null, 2)
+        };
+      }
+      // ai
+      const ai = toAIJSON(state.messages, state.usersById);
+      return {
+        filename: `mm-thread_${rootId}_${ts}_ai.json`,
+        mime: "application/json",
+        content: JSON.stringify(ai, null, 2)
+      };
+    }
+
+    async function copyCurrent() {
+      const { content } = getCurrentPayloadAndName();
+      try {
+        await navigator.clipboard.writeText(content);
+        flashTitle("Скопировано");
+      } catch (e) {
+        console.warn("Clipboard failed:", e);
+        flashTitle("Не удалось скопировать");
+      }
+    }
+
+    function downloadCurrent() {
+      const { filename, mime, content } = getCurrentPayloadAndName();
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = ce("a", { href: url, download: filename });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    // Flash-всплывашка в заголовке
+    let flashTimer = null;
+    function flashTitle(msg) {
+      const prev = title.textContent;
+      title.textContent = msg;
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => (title.textContent = prev), 1500);
+    }
+
+    // UI, когда не нашли rootId
+    function showNoRootUi() {
+      title.textContent = "RootId не найден";
+      secRaw.textContent = "{}";
+      secAI.textContent = "[]";
+
+      const p = document.createElement("div");
+      p.className = "mms-text";
+      p.style.marginTop = "8px";
+      p.textContent = "Мы не смогли определить тред из URL. Откройте тред в правой панели или выберите сообщение вручную.";
+
+      const pickBtn = document.createElement("button");
+      pickBtn.className = "mms-btn";
+      pickBtn.textContent = "Выбрать кликом";
+      pickBtn.title = "Кликните по любому сообщению треда";
+      pickBtn.addEventListener("click", () => pickRootByClick());
+
+      secThread.innerHTML = "";
+      secThread.append(p, document.createElement("br"), pickBtn);
+      setActiveTab("thread");
+    }
+
+    // Выбор корневого сообщения кликом по DOM
+    function pickRootByClick() {
+      const overlay = document.createElement("div");
+      overlay.style.position = "fixed";
+      overlay.style.inset = "0";
+      overlay.style.background = "rgba(0,0,0,0.05)";
+      overlay.style.zIndex = "1000000";
+      overlay.style.cursor = "crosshair";
+      overlay.title = "Кликните по сообщению треда… (Esc — отмена)";
+      document.body.appendChild(overlay);
+
+      const cleanup = () => overlay.remove();
+
+      const onKey = (e) => {
+        if (e.key === "Escape") {
+          window.removeEventListener("keydown", onKey, true);
+          overlay.removeEventListener("click", onClick, true);
+          cleanup();
+        }
+      };
+
+      const onClick = async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        window.removeEventListener("keydown", onKey, true);
+        overlay.removeEventListener("click", onClick, true);
+        cleanup();
+
+        let node = e.target;
+        let found = null;
+        for (let i = 0; i < 10 && node; i++, node = node.parentElement) {
+          const tryId = extractPostIdFromString(node.id);
+          if (tryId) { found = tryId; break; }
+          for (const attr of ["data-testid", "aria-labelledby"]) {
+            const v = node.getAttribute && node.getAttribute(attr);
+            const fromAttr = extractPostIdFromString(v || "");
+            if (fromAttr) { found = fromAttr; break; }
+          }
+          if (found) break;
+        }
+        if (!found) {
+          alert("Не удалось определить postId. Попробуйте кликнуть по тексту сообщения или аватару.");
+          return;
+        }
+
+        try {
+          const raw = await apiGetThread(found);
+          state.rawThread = raw;
+          const { messages, userIds } = normalizeThread(raw);
+          state.messages = messages;
+          state.usersById = await fetchUsers(userIds, { concurrency: 6 });
+          // Перерисуем активную вкладку
+          setActiveTab(state.activeTab);
+          flashTitle("Готово");
+        } catch (err) {
+          console.error(err);
+          alert(`Ошибка загрузки треда: ${err.status ? `HTTP ${err.status}` : ""} ${err.message || err}`);
+        }
+      };
+
+      window.addEventListener("keydown", onKey, true);
+      overlay.addEventListener("click", onClick, true);
+    }
+
+    // Загрузка треда
+    async function refresh() {
+      const rootId = getRootPostId();
+      if (!rootId) {
+        showNoRootUi();
+        return;
+      }
+
+      btnRefresh.disabled = true;
+      flashTitle("Загрузка…");
+      try {
+        const raw = await apiGetThread(rootId);
+        state.rawThread = raw;
+
+        const { messages, userIds } = normalizeThread(raw);
+        state.messages = messages;
+
+        const users = await fetchUsers(userIds, { concurrency: 6 });
+        state.usersById = users;
+
+        if (state.activeTab === "thread") renderThread();
+        else if (state.activeTab === "raw") renderRaw();
+        else renderAI();
+
+        flashTitle("Готово");
+      } catch (e) {
+        console.error("Thread load error:", e);
+        const msg = `Ошибка загрузки: ${e.status ? `HTTP ${e.status}` : ""} ${e.message || e}`;
+        if (state.activeTab === "thread") secThread.textContent = msg;
+        if (state.activeTab === "raw") secRaw.textContent = msg;
+        if (state.activeTab === "ai") secAI.textContent = msg;
+        flashTitle("Ошибка");
+      } finally {
+        btnRefresh.disabled = false;
+      }
+    }
+
+    // Первичная отрисовка + автозагрузка
+    setActiveTab("thread");
+    refresh();
+
+    // Экспорт полезного в __mms__ (для отладки в консоли)
+    panel.__mms__ = { refresh, setActiveTab, state, title, secThread, secRaw, secAI };
     return panel;
   }
 
-  // Делегирование событий — единая точка
-  function attachDelegatedHandlers(panel) {
-    if (panel.__handlersAttached) return;
-    panel.__handlersAttached = true;
-
-    panel.addEventListener('click', async (ev) => {
-      const t = ev.target;
-      if (!(t instanceof HTMLElement)) return;
-
-      // Закрыть панель
-      if (t.id === 'mms-close') { panel.remove(); return; }
-
-      // Вкладки
-      if (t.classList.contains('mms-tab')) {
-        setMode(panel, t.getAttribute('data-mode') || 'thread'); return;
-      }
-
-      // Обновить (Refresh)
-      if (t.id === 'mms-refresh') {
-        const postId = getPostIdFromURL();
-        if (!postId) { alert('Не удалось определить postId из URL'); return; }
-        const prev = t.textContent;
-        t.disabled = true; t.textContent = 'Refreshing…';
-        try {
-          const data = await fetchThread(postId);
-          renderThread(data);
-        } catch (e) {
-          alert('Ошибка обновления: ' + (e.message || e));
-        } finally {
-          t.disabled = false; t.textContent = prev;
-        }
-        return;
-      }
-
-      // Скопировать промпт
-      if (t.id === 'mms-copy-prompt') {
-        try {
-          const url = chrome.runtime.getURL('ai_prompt.txt');
-          const r = await fetch(url, { cache: 'no-store' });
-          if (!r.ok) throw new Error('Файл ai_prompt.txt не найден или недоступен');
-          const text = await r.text();
-          await navigator.clipboard.writeText(text);
-          t.textContent = 'Скопировано';
-          setTimeout(() => (t.textContent = 'Скопировать промпт'), 1200);
-        } catch (e) {
-          alert('Не удалось скопировать промпт: ' + (e.message || e));
-        }
-        return;
-      }
-
-      // Скопировать текущее представление
-      if (t.id === 'mms-copy-current') {
-        const { text } = getCurrentViewPayload(panel);
-        try {
-          await navigator.clipboard.writeText(text);
-          t.textContent = 'Скопировано';
-          setTimeout(() => (t.textContent = 'Копировать'), 1200);
-        } catch (e) {
-          alert('Не удалось скопировать: ' + (e.message || e));
-        }
-        return;
-      }
-
-      // Скачать текущее представление
-      if (t.id === 'mms-download-current') {
-        const { text, filename, mime } = getCurrentViewPayload(panel);
-        const blob = new Blob([text], { type: mime });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1500);
-        return;
-      }
-
-      // Запустить суммаризацию
-      if (t.id === 'mms-run-summarizer') {
-        const btn = t;
-        const box = panel.querySelector('#mms-summary');
-        const { threadText } = getCurrentThreadTexts(panel);
-        btn.disabled = true; btn.textContent = 'Summarizing…';
-        try {
-          const summary = await callSummarizer(threadText);
-          if (box) {
-            box.style.display = 'block';
-            box.innerHTML = `<strong>Summary:</strong><br/>${escapeHTML(summary).replace(/\n/g, '<br/>')}`;
-          }
-        } catch (e) {
-          if (box) {
-            box.style.display = 'block';
-            box.innerHTML = `<span style="color:#f87171;">Ошибка summarizer: ${escapeHTML(e.message || String(e))}</span>`;
-          }
-        } finally {
-          btn.disabled = false; btn.textContent = 'Summarize Thread';
-        }
-        return;
-      }
-    });
+  function togglePanel() {
+    const panel = buildPanel();
+    panel.classList.toggle(ACTIVE_CLASS);
   }
 
-  function setMode(panel, mode) {
-    panel.dataset.mode = mode;
-    panel.querySelectorAll('.mms-tab').forEach(btn => {
-      const active = btn.getAttribute('data-mode') === mode;
-      btn.classList.toggle('mms-active', active);
-      btn.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
-    const body = panel.querySelector('#mms-body');
-    if (!body) return;
-    const viewThread = body.querySelector('#mms-view-thread');
-    const viewRaw = body.querySelector('#mms-view-raw');
-    const viewAi = body.querySelector('#mms-view-ai');
-    if (viewThread) viewThread.style.display = (mode === 'thread') ? 'block' : 'none';
-    if (viewRaw) viewRaw.style.display = (mode === 'raw') ? 'block' : 'none';
-    if (viewAi) viewAi.style.display = (mode === 'ai') ? 'block' : 'none';
-  }
-
-  function getCurrentThreadTexts(panel) {
-    const body = panel.querySelector('#mms-body');
-    const threadText = body?.querySelector('#mms-view-thread')?.getAttribute('data-plain') || '';
-    const rawText = body?.querySelector('#mms-view-raw')?.textContent || '';
-    const aiText = body?.querySelector('#mms-view-ai')?.textContent || '';
-    return { threadText, rawText, aiText };
-  }
-
-  function getCurrentViewPayload(panel) {
-    const mode = panel.dataset.mode || 'thread';
-    const { threadText, rawText, aiText } = getCurrentThreadTexts(panel);
-    if (mode === 'thread') return { text: threadText, filename: 'thread.txt', mime: 'text/plain' };
-    if (mode === 'raw') return { text: rawText, filename: 'thread.raw.json', mime: 'application/json' };
-    return { text: aiText, filename: 'thread.ai.json', mime: 'application/json' };
-  }
-
-  // -------- Render thread --------
-  function renderThread(data) {
-    const panel = ensurePanel();
-    const body = panel.querySelector('#mms-body');
-    if (!body) return;
-
-    const order = Array.isArray(data.order) ? data.order : Object.keys(data.posts || {});
-    const posts = data.posts || {};
-    const userMap = data.__userMap || {};
-
-    const items = order.map(id => {
-      const p = posts[id]; if (!p) return '';
-      const text = escapeHTML(p.message || '');
-      const user = escapeHTML(userMap[p.user_id] || (p.user_id || '').slice(0, 8));
-      const time = fmtTime(p.create_at);
-      return `
-        <div class="mms-msg">
-          <div class="mms-meta">
-            <span class="mms-user">${user}</span>
-            <span>·</span>
-            <span class="mms-time">${time}</span>
-          </div>
-          <div class="mms-text">${text.replace(/\n/g, '<br/>')}</div>
-        </div>`;
-    }).join('');
-
-    const threadText = order.map(id => {
-      const p = posts[id]; if (!p) return '';
-      const uname = (userMap[p.user_id] || (p.user_id || '').slice(0, 8));
-      const ts = fmtTime(p.create_at);
-      const msg = (p.message || '').replace(/\r?\n/g, '\n');
-      return `[${ts}] ${uname}: ${msg}`;
-    }).join('\n');
-
-    const aiJson = order.map(id => {
-      const p = posts[id]; if (!p) return null;
-      return { username: userMap[p.user_id] || (p.user_id || '').slice(0, 8), ts: fmtTsForAi(p.create_at), message: p.message || '' };
-    }).filter(Boolean);
-
-    body.innerHTML = `
-      <div id="mms-toolbar" style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-        <button id="mms-run-summarizer">Summarize Thread</button>
-      </div>
-      <div id="mms-view-thread" data-plain="${escapeHTML(threadText)}">${items || '<em>Нет сообщений</em>'}</div>
-      <pre id="mms-view-raw" data-json style="display:none; margin-top:10px; max-height:40vh; overflow:auto;"></pre>
-      <pre id="mms-view-ai" style="display:none; margin-top:10px; max-height:40vh; overflow:auto;"></pre>
-      <div id="mms-summary" style="margin-top:12px; padding:10px; border:1px solid #1f2937; border-radius:8px; display:none;"></div>
-    `;
-    const rawPre = body.querySelector('#mms-view-raw');
-    const aiPre = body.querySelector('#mms-view-ai');
-    if (rawPre) rawPre.textContent = JSON.stringify(data, null, 2);
-    if (aiPre) aiPre.textContent = JSON.stringify(aiJson, null, 2);
-
-    setMode(panel, panel.dataset.mode || 'thread');
-  }
-
-  // -------- Floating button --------
-  function ensureButton() {
-    if (document.getElementById(BTN_ID)) return document.getElementById(BTN_ID);
-    const postId = getPostIdFromURL();
-    if (!postId) return null;
-
-    const btn = document.createElement('button');
-    btn.id = BTN_ID;
-    btn.textContent = 'Summarize';
-    Object.assign(btn.style, {
-      position: 'fixed',
-      right: '16px',
-      bottom: '16px',
-      zIndex: 1000000,
-      background: '#2563eb',
-      color: '#fff',
-      border: 'none',
-      padding: '10px 14px',
-      borderRadius: '999px',
-      boxShadow: '0 8px 24px rgba(37,99,235,0.5)',
-      cursor: 'pointer'
-    });
-    btn.addEventListener('click', () => onClick(btn));
-    document.documentElement.appendChild(btn);
-    return btn;
-  }
-
-  // -------- Flow --------
-  async function onClick(btn) {
-    try {
-      if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
-      const rootId = getPostIdFromURL();
-      if (!rootId) throw new Error('Не удалось определить postId из URL');
-      const data = await fetchThread(rootId);
-      renderThread(data);
-    } catch (e) {
-      console.error('[MMS] onClick error', e);
-      alert(e.message || String(e));
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Summarize'; }
-    }
-  }
-
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.cmd === 'summarize') {
-      const btn = ensureButton();
-      onClick(btn).finally(() => sendResponse({ ok: true }));
-      return true;
+  /*************************************************************************
+   * Интеграция с background.js (клик по иконке)
+   *************************************************************************/
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.cmd === "summarize" || msg.cmd === "toggle") {
+      togglePanel();
     }
   });
 
-  const origPushState = history.pushState;
-  history.pushState = function () {
-    origPushState.apply(this, arguments);
-    setTimeout(ensureButton, 0);
-  };
-  window.addEventListener('popstate', ensureButton);
+  /*************************************************************************
+   * Автоинициализация и слежение за изменением URL (SPA)
+   *************************************************************************/
+  ensureStyles();
+  ensureButton();
+
+  let lastHref = location.href;
+  setInterval(() => {
+    if (location.href !== lastHref) {
+      lastHref = location.href;
+      const panel = qs(`#${PANEL_ID}`);
+      if (panel && panel.classList.contains(ACTIVE_CLASS) && panel.__mms__) {
+        panel.__mms__.title.textContent = "Thread Tools";
+        panel.__mms__.refresh();
+      }
+    }
+  }, 1000);
 })();
