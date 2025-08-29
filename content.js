@@ -3,14 +3,20 @@
 // Делает запросы ТОЛЬКО на текущий origin, с credentials: 'include'.
 // Никаких PAT, настроек и внешнего Summarizer.
 
-(() => {
+  (() => {
   "use strict";
+
+  const U = (window.MMS && window.MMS.utils);
+  if (!U) { console.error("MMS.utils not loaded"); return; }
+  const { qs, ce, escapeHTML, fmtDateTime, toISOUTC, sleep } = U;
 
   /*************************************************************************
    * Константы и утилиты
    *************************************************************************/
   const ALLOWED_HOSTS = ["chatzone.o3t.ru"]; // при необходимости добавь домены
   if (!ALLOWED_HOSTS.includes(location.hostname)) return;
+  
+
 
   const BTN_ID = "mms-fab";
   const PANEL_ID = "mms-side-panel";
@@ -19,32 +25,6 @@
   const TAB_ACTIVE_CLASS = "mms-tab-active";
 
   const BASE = location.origin;
-
-  const qs = (sel, root = document) => root.querySelector(sel);
-  const ce = (tag, props = {}, children = []) => {
-    const el = document.createElement(tag);
-    Object.assign(el, props);
-    for (const c of children) el.append(c);
-    return el;
-  };
-  const escapeHTML = (s) =>
-    String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-
-  const fmtDateTime = (ms) => {
-    try {
-      return new Date(ms).toLocaleString();
-    } catch {
-      return String(ms);
-    }
-  };
-  const toISOUTC = (ms) => new Date(ms).toISOString().replace("T", " ").replace("Z", " UTC");
-
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /*************************************************************************
    * Сеть (same-origin)
