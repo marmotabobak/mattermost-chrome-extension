@@ -1,0 +1,37 @@
+{
+    "name": "Mattermost Summarizer",
+    "version": "0.2.1",
+    "manifest_version": 3,
+    "description": "Adds a Summarize button on Mattermost thread pages and fetches the thread.",
+    "icons": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    },
+    "permissions": [
+        "storage",
+        "activeTab",
+        "scripting"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "background.js",
+        "type": "module"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "action": {
+        "default_title": "Mattermost Summarizer"
+    }
+}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MMS — Settings</title>
+    <link rel="stylesheet" href="options.css" />
+</head>
+
+<body>
+    <main>
+        <h1>⚙️ Настройки Mattermost Summarizer</h1>
+
+
+        <label class="row">
+            <span>MM Token</span>
+            <input id="mmToken" type="password" placeholder="Personal Access Token" />
+            <button id="toggleToken" type="button">Показать</button>
+        </label>
+
+
+        <label class="row">
+            <span>Summarization API</span>
+            <input id="summApi" type="url" placeholder="https://your-endpoint.example/summarize" />
+        </label>
+
+
+        <label class="row">
+            <span>MM Host (опц.)</span>
+            <input id="mmHost" type="text" placeholder="auto (по origin)" />
+        </label>
+
+
+        <div class="actions">
+            <button id="save" type="button">Сохранить</button>
+            <button id="clear" type="button" class="danger">Сброс</button>
+            <span id="status" aria-live="polite"></span>
+        </div>
+
+
+        <p class="hint">Токен хранится локально в <code>chrome.storage.sync</code> и не отправляется во внешний API.
+            Настройки синхронизируются между твоими браузерами под одним Google-аккаунтом.</p>
+    </main>
+    <script src="options.js"></script>
+</body>
+
+</html>
