@@ -29,6 +29,7 @@
         "utils.js",
         "api.js",
         "id-resolver.js",
+        "formatters.js",
         "ui.js",
         "content.js"
       ],
