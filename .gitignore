@@ -1,0 +1,18 @@
+# deps
+node_modules/
+
+# сборка/артефакты (если появятся)
+dist/
+build/
+
+# кэш/логи
+.eslintcache
+*.log
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+
+# тестовые артефакты (если вдруг появятся)
+coverage/
