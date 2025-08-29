@@ -8,14 +8,14 @@
         const loop = setInterval(() => {
             if (location.href !== lastHref) {
                 lastHref = location.href;
-                try { onChange(getPanel()); } catch (e) { /* no-op */ }
+                try { onChange(getPanel()); } catch { /* no-op */ }
             }
         }, 1000);
 
         // Когда вкладка снова активна, тоже попробуем обновиться
         const onVis = () => {
             if (!document.hidden) {
-                try { onChange(getPanel()); } catch (e) { /* no-op */ }
+                try { onChange(getPanel()); } catch { /* no-op */ }
             }
         };
         document.addEventListener("visibilitychange", onVis);

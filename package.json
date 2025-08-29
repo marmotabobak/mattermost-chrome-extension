@@ -1,0 +1,17 @@
+{
+    "name": "mattermost-thread-tools",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix",
+        "format": "prettier -w .",
+        "format:check": "prettier -c ."
+    },
+    "devDependencies": {
+        "eslint": "^9.4.0",
+        "globals": "^13.24.0",
+        "prettier": "^3.3.0"
+    }
+}

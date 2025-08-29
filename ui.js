@@ -20,7 +20,7 @@
         } = deps;
 
         // если уже создана — вернём существующий
-        let existing = qs(`#${PANEL_ID}`);
+        const existing = qs(`#${PANEL_ID}`);
         if (existing) return existing;
 
         // --- DOM каркас ---

@@ -6,47 +6,51 @@
 (() => {
   "use strict";
 
+  // utils
   const U = (window.MMS && window.MMS.utils);
   if (!U) { console.error("MMS.utils not loaded"); return; }
-  const { qs, ce, escapeHTML, fmtDateTime, toISOUTC, sleep } = U;
+  const { qs } = U;
 
+  // ui
   const UI = (window.MMS && window.MMS.ui);
   if (!UI) { console.error("MMS.ui not loaded"); return; }
 
+  // api
   const API = (window.MMS && window.MMS.api);
   if (!API) { console.error("MMS.api not loaded"); return; }
-  const { apiGetThread, apiGetUser, fetchUsers } = API;
+  const { apiGetThread, fetchUsers } = API; // apiGetUser здесь не используется
 
+  // id-resolver
   const IDR = (window.MMS && window.MMS.idResolver);
   if (!IDR) { console.error("MMS.idResolver not loaded"); return; }
   const { getRootPostId, extractPostIdFromString } = IDR;
 
+  // formatters
   const FMT = (window.MMS && window.MMS.formatters);
   if (!FMT) { console.error("MMS.formatters not loaded"); return; }
   const { normalizeThread, formatDisplayName, toAIJSON } = FMT;
 
+  // constants
   const C = (window.MMS && window.MMS.consts);
   if (!C) { console.error("MMS.consts not loaded"); return; }
-  const { BTN_ID, PANEL_ID, ACTIVE_CLASS, TAB_ACTIVE_CLASS, ALLOWED_HOSTS } = C;
-  
+  const { PANEL_ID, ACTIVE_CLASS, ALLOWED_HOSTS } = C;
+
   if (!ALLOWED_HOSTS.includes(location.hostname)) return;
 
-
-  const BASE = location.origin;
 
   function buildPanel() {
     let panel = qs(`#${PANEL_ID}`);
     if (panel) return panel;
 
-  panel = UI.createPanel({
-    apiGetThread,
-    fetchUsers,
-    getRootPostId,
-    formatDisplayName,
-    normalizeThread,
-    toAIJSON,
-    extractPostIdFromString
-  });
+    panel = UI.createPanel({
+      apiGetThread,
+      fetchUsers,
+      getRootPostId,
+      formatDisplayName,
+      normalizeThread,
+      toAIJSON,
+      extractPostIdFromString
+    });
     document.body.append(panel);
     return panel;
   }
