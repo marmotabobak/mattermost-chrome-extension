@@ -31,7 +31,8 @@
         "id-resolver.js",
         "formatters.js",
         "ui.js",
-        "content.js"
+        "content.js",
+        "bootstrap.js"
       ],
       "run_at": "document_idle"
     }

@@ -41,27 +41,6 @@
 
   const BASE = location.origin;
 
-  function ensureStylesheetLink() {
-    const id = "mms-stylesheet";
-    if (document.getElementById(id)) return;
-    const link = document.createElement("link");
-    link.id = id;
-    link.rel = "stylesheet";
-    link.href = chrome.runtime.getURL("panel.css");
-    document.head.appendChild(link);
-  }
-
-  /*************************************************************************
-   * Панель, табы, кнопки (Refresh / Copy / Download)
-   *************************************************************************/
-  function ensureButton() {
-    if (qs(`#${BTN_ID}`)) return;
-    const btn = ce("button", { id: BTN_ID, title: "Показать/скрыть панель треда" });
-    btn.textContent = "Thread Tools";
-    btn.addEventListener("click", togglePanel);
-    document.body.append(btn);
-  }
-
   function buildPanel() {
     let panel = qs(`#${PANEL_ID}`);
     if (panel) return panel;
@@ -86,6 +65,10 @@
     panel.classList.toggle(ACTIVE_CLASS);
   }
 
+  window.MMS = window.MMS || {};
+  window.MMS.app = window.MMS.app || {};
+  window.MMS.app.togglePanel = togglePanel;
+
   /*************************************************************************
    * Интеграция с background.js (клик по иконке)
    *************************************************************************/
@@ -95,12 +78,6 @@
       togglePanel();
     }
   });
-
-  /*************************************************************************
-   * Автоинициализация и слежение за изменением URL (SPA)
-   *************************************************************************/
-  ensureStylesheetLink();
-  ensureButton();
 
   let lastHref = location.href;
   setInterval(() => {
