@@ -1,4 +1,4 @@
-// id-resolver.js — извлечение postId (rootId) из URL/DOM без изменения логики.
+// id-resolver.js — извлечение postId (rootId) из URL/DOM.
 /* global window, document, location */
 
 (() => {
@@ -12,14 +12,15 @@
         return m ? m[1] : null;
     }
 
-    // Пытаемся вытащить id корневого поста из DOM (RHS и центр)
+    // Пытаемся вытащить id корневого поста из DOM (приоритет — RHS)
     function getRootPostIdFromDOM() {
         const selectors = [
             // RHS (правая панель)
             '[id^="rhsPostMessageText_"]',
             '[id^="rhsRootPost_"]',
             '.SidebarRight [id^="post_"]',
-            // Центр
+            // Центр (оставляем для совместимости со старыми тестами/вызовами этой функции,
+            // но getRootPostId() теперь пользуется DOM только если RHS точно открыт)
             '[id^="postMessageText_"]',
             '[id^="postContent_"]',
             '[id^="post_"]',
@@ -45,7 +46,27 @@
         return null;
     }
 
-    // Комбинированный резолвер: сначала URL, затем DOM
+    // Утилиты для проверки контекста
+    function isVisible(el) {
+        if (!el) return false;
+        if (el.offsetParent !== null) return true;
+        const cs = getComputedStyle(el);
+        return cs && cs.display !== "none" && cs.visibility !== "hidden" && parseFloat(cs.opacity || "1") > 0;
+    }
+
+    // Понимаем, что открыта правая панель (RHS)
+    function isRHSOpen() {
+        // типичный контейнер RHS
+        const rhs = document.querySelector(".SidebarRight, [class*='SidebarRight']");
+        if (isVisible(rhs)) return true;
+
+        // либо есть явно RHS-элементы (идентификаторы сообщений в правой панели)
+        if (document.querySelector('[id^="rhsPostMessageText_"], [id^="rhsRootPost_"]')) return true;
+
+        return false;
+    }
+
+    // Комбинированный резолвер: сначала URL, затем DOM (только если RHS действительно открыт)
     function getRootPostId() {
         const url = new URL(location.href);
         const parts = url.pathname.split("/").filter(Boolean);
@@ -55,7 +76,7 @@
             return i >= 0 && arr[i + 1] ? arr[i + 1] : null;
         };
 
-        // Популярные паттерны Mattermost
+        // Популярные паттерны Mattermost (permalink/thread/posts)
         const fromUrl =
             nextAfter(parts, "pl") ||
             (parts[0] === "_redirect" && nextAfter(parts.slice(1), "pl")) ||
@@ -65,13 +86,17 @@
 
         if (isValidPostId(fromUrl)) return fromUrl;
 
-        const fromDom = getRootPostIdFromDOM();
-        if (isValidPostId(fromDom)) return fromDom;
+        // Если открыта правая панель — можно доверять DOM RHS
+        if (isRHSOpen()) {
+            const fromDom = getRootPostIdFromDOM();
+            if (isValidPostId(fromDom)) return fromDom;
+        }
 
+        // В обычной ленте канала/личке — не подхватываем произвольный пост
         return null;
     }
 
-    // Экспорт в неймспейс MMS
+    // Экспорт
     window.MMS = window.MMS || {};
     window.MMS.idResolver = {
         isValidPostId,
