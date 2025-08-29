@@ -5,14 +5,14 @@
   "action": {
     "default_title": "Summarize"
   },
-  "permissions": ["storage", "activeTab", "scripting"],
-  "host_permissions": ["https://*/", "http://*/"],
+  "permissions": ["storage", "scripting"],
+  "host_permissions": ["https://chatzone.o3t.ru/*"],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://*/*", "http://*/*"],
+      "matches": ["https://chatzone.o3t.ru/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
@@ -21,7 +21,7 @@
   "web_accessible_resources": [
     {
       "resources": ["ai_prompt.txt"],
-      "matches": ["<all_urls>"]
+      "matches": ["https://chatzone.o3t.ru/*"]
     }
   ]
 }
