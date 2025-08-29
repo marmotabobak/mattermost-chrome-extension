@@ -109,6 +109,28 @@
     word-break: break-word;
 }
 
+/* Manual ID input row */
+.mms-field {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.mms-input {
+    flex: 1;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    outline: none;
+}
+
+.mms-input:focus {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.35);
+}
+
 /* Floating button */
 #mms-fab {
     position: fixed;

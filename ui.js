@@ -1,4 +1,4 @@
-// ui.js — построение и управление панелью UI (без изменения логики).
+// ui.js — построение и управление панелью UI.
 /* global window, document */
 
 (() => {
@@ -120,10 +120,11 @@
             const prev = title.textContent;
             title.textContent = msg;
             clearTimeout(flashTimer);
-            flashTimer = setTimeout(() => (title.textContent = prev), 1500);
+            flashTimer = setTimeout(() => (title.textContent = "Thread Tools"), 1500);
         }
 
         function getCurrentPayloadAndName() {
+            // Пытаемся взять rootId (если его нет, используем "thread" для имени файла)
             const rootId = getRootPostId() || "thread";
             const ts = new Date().toISOString().replace(/[:.]/g, "-");
             if (state.activeTab === "thread") {
@@ -175,29 +176,34 @@
             URL.revokeObjectURL(url);
         }
 
+        // --- Новое: режим ручного ввода ID треда ---
         function showNoRootUi() {
             title.textContent = "RootId не найден";
             secRaw.textContent = "{}";
             secAI.textContent = "[]";
 
-            // Подготовим контент секции Thread
+            // Секция Thread: подсказка + поле ввода и кнопка загрузки
             secThread.innerHTML = "";
-            const p = document.createElement("div");
-            p.className = "mms-text";
-            p.style.marginTop = "8px";
-            p.textContent =
-                "Мы не смогли определить тред из URL. Откройте тред в правой панели или выберите сообщение вручную.";
 
-            const pickBtn = document.createElement("button");
-            pickBtn.className = "mms-btn";
-            pickBtn.textContent = "Выбрать кликом";
-            pickBtn.title = "Кликните по любому сообщению треда";
-            pickBtn.addEventListener("click", () => pickRootByClick());
+            const p = ce("div", {
+                className: "mms-text",
+                textContent:
+                    "Мы не смогли определить тред из URL. Введите ID корневого поста (26 символов) и нажмите «Загрузить».",
+            });
 
-            secThread.append(p, document.createElement("br"), pickBtn);
+            const field = ce("div", { className: "mms-field" });
+            const input = ce("input", {
+                className: "mms-input",
+                placeholder: "Например: 1234567890abcdefghijklmnop",
+                maxLength: 64,
+                spellcheck: false,
+            });
+            const loadBtn = ce("button", { className: "mms-btn", textContent: "Загрузить", title: "Загрузить тред по ID" });
 
-            // ВАЖНО: НЕ вызывать setActiveTab('thread'), чтобы не затереть контент.
-            // Просто вручную отметить активную вкладку/секцию.
+            field.append(input, loadBtn);
+            secThread.append(p, field);
+
+            // отметим активной вкладкой Thread, не дергая setActiveTab (чтобы не перерисовать секцию)
             state.activeTab = "thread";
             tabThread.classList.add(TAB_ACTIVE_CLASS);
             tabRaw.classList.remove(TAB_ACTIVE_CLASS);
@@ -205,71 +211,50 @@
             secThread.classList.add(ACTIVE_CLASS);
             secRaw.classList.remove(ACTIVE_CLASS);
             secAI.classList.remove(ACTIVE_CLASS);
-        }
 
-        function pickRootByClick() {
-            const overlay = document.createElement("div");
-            overlay.style.position = "fixed";
-            overlay.style.inset = "0";
-            overlay.style.background = "rgba(0,0,0,0.05)";
-            overlay.style.zIndex = "1000000";
-            overlay.style.cursor = "crosshair";
-            overlay.title = "Кликните по сообщению треда… (Esc — отмена)";
-            document.body.appendChild(overlay);
-
-            const cleanup = () => overlay.remove();
-
-            const onKey = (e) => {
-                if (e.key === "Escape") {
-                    window.removeEventListener("keydown", onKey, true);
-                    overlay.removeEventListener("click", onClick, true);
-                    cleanup();
-                }
-            };
-
-            const onClick = async (e) => {
-                e.preventDefault(); e.stopPropagation();
-                window.removeEventListener("keydown", onKey, true);
-                overlay.removeEventListener("click", onClick, true);
-                cleanup();
-
-                let node = e.target;
-                let found = null;
-                for (let i = 0; i < 10 && node; i++, node = node.parentElement) {
-                    const tryId = extractPostIdFromString(node.id);
-                    if (tryId) { found = tryId; break; }
-                    for (const attr of ["data-testid", "aria-labelledby"]) {
-                        const v = node.getAttribute && node.getAttribute(attr);
-                        const fromAttr = extractPostIdFromString(v || "");
-                        if (fromAttr) { found = fromAttr; break; }
-                    }
-                    if (found) break;
-                }
-                if (!found) {
-                    alert("Не удалось определить postId. Попробуйте кликнуть по тексту сообщения или аватару.");
+            async function tryLoadByManualId() {
+                const rawVal = (input.value || "").trim();
+                const maybeId = extractPostIdFromString(rawVal);
+                if (!maybeId || !/^[a-z0-9]{26}$/i.test(maybeId)) {
+                    alert("Некорректный ID. Должно быть 26 латинских букв/цифр.");
+                    input.focus();
                     return;
                 }
 
+                btnRefresh.disabled = true;
+                title.textContent = "Загрузка…";
                 try {
-                    const raw = await apiGetThread(found);
+                    const raw = await apiGetThread(maybeId);
                     state.rawThread = raw;
+
                     const { messages, userIds } = normalizeThread(raw);
                     state.messages = messages;
-                    state.usersById = await fetchUsers(userIds, { concurrency: 6 });
-                    setActiveTab(state.activeTab);
+
+                    const users = await fetchUsers(userIds, { concurrency: 6 });
+                    state.usersById = users;
+
                     title.textContent = "Thread Tools";
+                    // перерисуем текущую вкладку (сейчас это thread)
+                    setActiveTab(state.activeTab);
                     flashTitle("Готово");
                 } catch (err) {
                     console.error(err);
                     alert(`Ошибка загрузки треда: ${err.status ? `HTTP ${err.status}` : ""} ${err.message || err}`);
+                    title.textContent = "Thread Tools";
+                    flashTitle("Ошибка");
+                } finally {
+                    btnRefresh.disabled = false;
                 }
-            };
+            }
 
-            window.addEventListener("keydown", onKey, true);
-            overlay.addEventListener("click", onClick, true);
+            loadBtn.addEventListener("click", tryLoadByManualId);
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") tryLoadByManualId();
+            });
+            input.focus();
         }
 
-        // --- загрузка треда ---
+        // --- загрузка треда по авто-детекту ---
         async function refresh() {
             const rootId = getRootPostId();
             if (!rootId) {
@@ -278,7 +263,7 @@
             }
 
             btnRefresh.disabled = true;
-            flashTitle("Загрузка…");
+            title.textContent = "Загрузка…";
             try {
                 const raw = await apiGetThread(rootId);
                 state.rawThread = raw;
@@ -301,6 +286,7 @@
                 if (state.activeTab === "thread") secThread.textContent = msg;
                 if (state.activeTab === "raw") secRaw.textContent = msg;
                 if (state.activeTab === "ai") secAI.textContent = msg;
+                title.textContent = "Thread Tools";
                 flashTitle("Ошибка");
             } finally {
                 btnRefresh.disabled = false;
