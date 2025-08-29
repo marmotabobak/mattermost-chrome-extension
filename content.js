@@ -62,7 +62,7 @@
 
     const text = await res.text();
     let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
+    try { json = text ? JSON.parse(text) : null; } catch { }
 
     if (!res.ok) {
       const msg =
@@ -214,91 +214,14 @@
     }));
   }
 
-  /*************************************************************************
-   * Стили UI (кнопка, панель, табы)
-   *************************************************************************/
-  function ensureStyles() {
-    if (qs(`#${PANEL_ID}-styles`)) return;
-    const style = ce("style", { id: `${PANEL_ID}-styles` });
-    style.textContent = `
-      .${PANEL_ROOT_CLASS} {
-        position: fixed;
-        top: 48px;
-        right: 16px;
-        width: min(720px, 48vw);
-        height: 70vh;
-        z-index: 999999;
-        background: #fff;
-        color: #1f2937;
-        border: 1px solid rgba(0,0,0,0.1);
-        border-radius: 12px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-        display: none;
-        flex-direction: column;
-        overflow: hidden;
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Inter, Arial, sans-serif;
-      }
-      .${PANEL_ROOT_CLASS}.${ACTIVE_CLASS} { display: flex; }
-
-      .mms-header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 10px;
-        border-bottom: 1px solid rgba(0,0,0,0.08);
-        background: #f8fafc;
-      }
-      .mms-title { font-weight: 600; margin-right: auto; }
-
-      .mms-btn {
-        border: 1px solid rgba(0,0,0,0.12);
-        background: white;
-        border-radius: 8px;
-        padding: 6px 10px;
-        font-size: 12px;
-        cursor: pointer;
-      }
-      .mms-btn[disabled] { opacity: .6; cursor: default; }
-
-      .mms-tabs { display: flex; gap: 6px; margin-left: 8px; }
-      .mms-tab {
-        padding: 6px 10px;
-        border-radius: 8px;
-        border: 1px solid transparent;
-        background: transparent;
-        cursor: pointer;
-        font-size: 12px;
-      }
-      .mms-tab.${TAB_ACTIVE_CLASS} {
-        background: #eef2ff;
-        border-color: #c7d2fe;
-      }
-
-      .mms-body { flex: 1; overflow: auto; background: #fff; }
-      .mms-section { display: none; padding: 10px 14px; }
-      .mms-section.${ACTIVE_CLASS} { display: block; }
-
-      .mms-msg { border-bottom: 1px dashed rgba(0,0,0,0.08); padding: 8px 0; }
-      .mms-msg:last-child { border-bottom: none; }
-      .mms-meta { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
-      .mms-text { white-space: pre-wrap; word-break: break-word; }
-
-      #${BTN_ID} {
-        position: fixed;
-        right: 16px;
-        bottom: 16px;
-        z-index: 999999;
-        background: #111827;
-        color: #fff;
-        border: none;
-        border-radius: 999px;
-        padding: 10px 14px;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
-        cursor: pointer;
-        font-size: 13px;
-      }
-    `;
-    document.head.append(style);
+  function ensureStylesheetLink() {
+    const id = "mms-stylesheet";
+    if (document.getElementById(id)) return;
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href = chrome.runtime.getURL("panel.css");
+    document.head.appendChild(link);
   }
 
   /*************************************************************************
@@ -617,7 +540,7 @@
   /*************************************************************************
    * Автоинициализация и слежение за изменением URL (SPA)
    *************************************************************************/
-  ensureStyles();
+  ensureStylesheetLink();
   ensureButton();
 
   let lastHref = location.href;

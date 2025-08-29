@@ -1,31 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Mattermost Thread Summarizer",
-  "version": "1.0.0",
-  "description": "Adds a Summarize button on Mattermost thread pages and fetches the thread.",
-  
+  "name": "Mattermost Thread Tools",
+  "version": "0.1.0",
+  "description": "Панель для просмотра треда Mattermost: Thread / Raw JSON / JSON для AI, копирование и скачивание.",
+  "action": {},
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  
-  "action": {
-    "default_title": "Summarize",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
-  },
-  
-  "permissions": ["scripting"],
-  "host_permissions": ["https://chatzone.o3t.ru/*"],
-  
-  "background": {
-    "service_worker": "background.js"
-  },
-  
+  "host_permissions": [
+    "https://chatzone.o3t.ru/*"
+  ],
+  "permissions": [
+    "storage"
+  ],
   "content_scripts": [
     {
       "matches": ["https://chatzone.o3t.ru/*"],
@@ -33,10 +23,13 @@
       "run_at": "document_idle"
     }
   ],
-
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "web_accessible_resources": [
     {
-      "resources": ["ai_prompt.txt"],
+      "resources": ["panel.css"],
       "matches": ["https://chatzone.o3t.ru/*"]
     }
   ]
