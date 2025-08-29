@@ -3,7 +3,7 @@
 // Делает запросы ТОЛЬКО на текущий origin, с credentials: 'include'.
 // Никаких PAT, настроек и внешнего Summarizer.
 
-  (() => {
+(() => {
   "use strict";
 
   const U = (window.MMS && window.MMS.utils);
@@ -13,12 +13,16 @@
   const UI = (window.MMS && window.MMS.ui);
   if (!UI) { console.error("MMS.ui not loaded"); return; }
 
+  const API = (window.MMS && window.MMS.api);
+  if (!API) { console.error("MMS.api not loaded"); return; }
+  const { apiGetThread, apiGetUser, fetchUsers } = API;
+
   /*************************************************************************
    * Константы и утилиты
    *************************************************************************/
   const ALLOWED_HOSTS = ["chatzone.o3t.ru"]; // при необходимости добавь домены
   if (!ALLOWED_HOSTS.includes(location.hostname)) return;
-  
+
 
 
   const BTN_ID = "mms-fab";
@@ -28,66 +32,6 @@
   const TAB_ACTIVE_CLASS = "mms-tab-active";
 
   const BASE = location.origin;
-
-  /*************************************************************************
-   * Сеть (same-origin)
-   *************************************************************************/
-  async function fetchJSON(path, init = {}) {
-    const url = path.startsWith("http") ? path : BASE + (path.startsWith("/") ? path : "/" + path);
-    const res = await fetch(url, {
-      credentials: "include", // кука сессии приедет автоматически
-      ...init,
-      headers: {
-        Accept: "application/json",
-        ...(init.headers || {}),
-      },
-    });
-
-    const text = await res.text();
-    let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch { }
-
-    if (!res.ok) {
-      const msg =
-        (json && (json.message || json.error)) ||
-        text ||
-        `HTTP ${res.status} ${res.statusText}`;
-      const err = new Error(msg);
-      err.status = res.status;
-      err.body = text;
-      throw err;
-    }
-    return json;
-  }
-
-  async function apiGetThread(rootId, perPage = 200) {
-    return fetchJSON(`/api/v4/posts/${encodeURIComponent(rootId)}/thread?per_page=${perPage}`);
-  }
-
-  async function apiGetUser(id) {
-    return fetchJSON(`/api/v4/users/${encodeURIComponent(id)}`);
-  }
-
-  async function fetchUsers(ids, { concurrency = 6 } = {}) {
-    const uniq = Array.from(new Set(ids)).filter(Boolean);
-    const results = new Map();
-    let i = 0;
-    async function worker() {
-      while (i < uniq.length) {
-        const id = uniq[i++];
-        try {
-          const u = await apiGetUser(id);
-          results.set(id, u);
-        } catch (e) {
-          console.warn("User fetch failed:", id, e);
-          results.set(id, { id, username: id.slice(0, 8) });
-        }
-      }
-    }
-    const workers = Array.from({ length: Math.min(concurrency, uniq.length) }, () => worker());
-    await Promise.all(workers);
-    return results;
-  }
 
   /*************************************************************************
    * Извлечение rootId (URL + DOM + fallback-клик)
@@ -233,9 +177,9 @@
       consts: { PANEL_ID, ACTIVE_CLASS, TAB_ACTIVE_CLASS },
     });
 
-  document.body.append(panel);
-  return panel;
-}
+    document.body.append(panel);
+    return panel;
+  }
 
   function togglePanel() {
     const panel = buildPanel();
