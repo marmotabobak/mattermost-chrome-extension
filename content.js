@@ -1,15 +1,10 @@
-// content.js — MV3 content script
-// Работает на страницах Mattermost (например, chatzone.o3t.ru/*).
-// Делает запросы ТОЛЬКО на текущий origin, с credentials: 'include'.
-// Никаких PAT, настроек и внешнего Summarizer.
+// content.js — интеграция модулей и управление панелью.
+/* global window, document, chrome */
 
 (() => {
-  "use strict";
-
   // utils
   const U = (window.MMS && window.MMS.utils);
   if (!U) { console.error("MMS.utils not loaded"); return; }
-  const { qs } = U;
 
   // ui
   const UI = (window.MMS && window.MMS.ui);
@@ -18,7 +13,7 @@
   // api
   const API = (window.MMS && window.MMS.api);
   if (!API) { console.error("MMS.api not loaded"); return; }
-  const { apiGetThread, fetchUsers } = API; // apiGetUser здесь не используется
+  const { apiGetThread, fetchUsers, ensureRootId } = API;
 
   // id-resolver
   const IDR = (window.MMS && window.MMS.idResolver);
@@ -37,65 +32,57 @@
 
   if (!ALLOWED_HOSTS.includes(location.hostname)) return;
 
+  let panel = null;
 
   function buildPanel() {
-    let panel = qs(`#${PANEL_ID}`);
-    if (panel) return panel;
+    if (panel && document.body.contains(panel)) return panel;
 
     panel = UI.createPanel({
       apiGetThread,
       fetchUsers,
       getRootPostId,
+      ensureRootId,           // ← прокидываем новый хелпер
       formatDisplayName,
       normalizeThread,
       toAIJSON,
-      extractPostIdFromString
+      extractPostIdFromString,
     });
-    document.body.append(panel);
+
+    document.body.appendChild(panel);
     return panel;
   }
 
   function togglePanel() {
-    const panel = buildPanel();
-    panel.classList.toggle(ACTIVE_CLASS);
+    const p = buildPanel();
+    p.classList.toggle(ACTIVE_CLASS);
   }
 
+  // экспорт для bootstrap.js
   window.MMS = window.MMS || {};
   window.MMS.app = window.MMS.app || {};
   window.MMS.app.togglePanel = togglePanel;
 
-  /*************************************************************************
-   * Интеграция с background.js (клик по иконке)
-   *************************************************************************/
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (!msg || typeof msg !== "object") return;
-    if (msg.cmd === "summarize" || msg.cmd === "toggle") {
-      togglePanel();
-    }
-  });
+  // сообщения из background (горячая клавиша/кнопка)
+  if (chrome && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (!msg || typeof msg !== "object") return;
+      if (msg.cmd === "summarize" || msg.cmd === "toggle") {
+        togglePanel();
+      }
+    });
+  }
 
+  // отслеживание смены URL в SPA
   const SW = (window.MMS && window.MMS.spaWatcher);
   if (SW && typeof SW.start === "function") {
     SW.start(
       () => document.getElementById(PANEL_ID),
-      (panel) => {
-        if (panel && panel.classList.contains(ACTIVE_CLASS) && panel.__mms__) {
-          panel.__mms__.title.textContent = "Thread Tools";
-          panel.__mms__.refresh();
+      (p) => {
+        if (p && p.classList.contains(ACTIVE_CLASS) && p.__mms__) {
+          p.__mms__.title.textContent = "Thread Tools";
+          p.__mms__.refresh();
         }
       }
     );
   }
-
-  let lastHref = location.href;
-  setInterval(() => {
-    if (location.href !== lastHref) {
-      lastHref = location.href;
-      const panel = qs(`#${PANEL_ID}`);
-      if (panel && panel.classList.contains(ACTIVE_CLASS) && panel.__mms__) {
-        panel.__mms__.title.textContent = "Thread Tools";
-        panel.__mms__.refresh();
-      }
-    }
-  }, 1000);
 })();

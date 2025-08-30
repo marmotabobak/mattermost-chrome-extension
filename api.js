@@ -32,10 +32,35 @@
         return json;
     }
 
-    // GET /api/v4/posts/{rootId}/thread?per_page=...
-    async function apiGetThread(rootId, perPage = 200) {
-        return fetchJSON(`/api/v4/posts/${encodeURIComponent(rootId)}/thread?per_page=${perPage}`);
+    // --- Threads & posts ---
+
+    // GET /api/v4/posts/{postId}/thread?per_page=...
+    async function apiGetThread(postId, perPage = 200) {
+        return fetchJSON(`/api/v4/posts/${encodeURIComponent(postId)}/thread?per_page=${perPage}`);
     }
+
+    // GET /api/v4/posts/{postId}
+    async function apiGetPost(postId) {
+        return fetchJSON(`/api/v4/posts/${encodeURIComponent(postId)}`);
+    }
+
+    /**
+     * Возвращает id корневого поста (root id) для любого поста.
+     * Если у поста есть root_id — вернём его; иначе — сам id.
+     */
+    async function ensureRootId(postId) {
+        if (!postId) return postId;
+        try {
+            const p = await apiGetPost(postId);
+            return (p && p.root_id) ? p.root_id : (p && p.id) ? p.id : postId;
+        } catch (e) {
+            // В худшем случае не рушим UX и пробуем как есть
+            console.warn("ensureRootId: fallback to provided id due to error:", e);
+            return postId;
+        }
+    }
+
+    // --- Users ---
 
     // GET /api/v4/users/{id}
     async function apiGetUser(id) {
@@ -68,5 +93,5 @@
 
     // Экспорт в неймспейс MMS
     window.MMS = window.MMS || {};
-    window.MMS.api = { fetchJSON, apiGetThread, apiGetUser, fetchUsers };
+    window.MMS.api = { fetchJSON, apiGetThread, apiGetPost, ensureRootId, apiGetUser, fetchUsers };
 })();

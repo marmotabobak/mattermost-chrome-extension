@@ -17,6 +17,8 @@
             normalizeThread,
             toAIJSON,
             extractPostIdFromString,
+            // новое: может быть не передано (в тестах); по умолчанию — идентичность
+            ensureRootId = async (id) => id,
         } = deps;
 
         // если уже создана — вернём существующий
@@ -176,13 +178,12 @@
             URL.revokeObjectURL(url);
         }
 
-        // --- Новое: режим ручного ввода ID треда ---
+        // --- Режим ручного ввода ID (когда auto-детект не сработал) ---
         function showNoRootUi() {
             title.textContent = "RootId не найден";
             secRaw.textContent = "{}";
             secAI.textContent = "[]";
 
-            // Секция Thread: подсказка + поле ввода и кнопка загрузки
             secThread.innerHTML = "";
 
             const p = ce("div", {
@@ -203,7 +204,7 @@
             field.append(input, loadBtn);
             secThread.append(p, field);
 
-            // отметим активной вкладкой Thread, не дергая setActiveTab (чтобы не перерисовать секцию)
+            // отметить активной вкладкой Thread, не дергая setActiveTab
             state.activeTab = "thread";
             tabThread.classList.add(TAB_ACTIVE_CLASS);
             tabRaw.classList.remove(TAB_ACTIVE_CLASS);
@@ -224,7 +225,9 @@
                 btnRefresh.disabled = true;
                 title.textContent = "Загрузка…";
                 try {
-                    const raw = await apiGetThread(maybeId);
+                    // 🔧 Приводим к корневому id прежде чем грузить тред
+                    const root = await ensureRootId(maybeId);
+                    const raw = await apiGetThread(root);
                     state.rawThread = raw;
 
                     const { messages, userIds } = normalizeThread(raw);
@@ -234,7 +237,6 @@
                     state.usersById = users;
 
                     title.textContent = "Thread Tools";
-                    // перерисуем текущую вкладку (сейчас это thread)
                     setActiveTab(state.activeTab);
                     flashTitle("Готово");
                 } catch (err) {
@@ -256,8 +258,8 @@
 
         // --- загрузка треда по авто-детекту ---
         async function refresh() {
-            const rootId = getRootPostId();
-            if (!rootId) {
+            const detected = getRootPostId();
+            if (!detected) {
                 showNoRootUi();
                 return;
             }
@@ -265,6 +267,8 @@
             btnRefresh.disabled = true;
             title.textContent = "Загрузка…";
             try {
+                // 🔧 Приводим к корневому id прежде чем грузить тред
+                const rootId = await ensureRootId(detected);
                 const raw = await apiGetThread(rootId);
                 state.rawThread = raw;
 
