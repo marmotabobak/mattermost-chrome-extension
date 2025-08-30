@@ -11,7 +11,7 @@
     "128": "icons/icon128.png"
   },
   "host_permissions": [
-    "https://chatzone.o3t.ru/*"
+    "https://<MATTERMOST_URL>/*"
   ],
   "permissions": [
     "storage"
@@ -23,9 +23,10 @@
   "content_scripts": [
     {
       "matches": [
-        "https://chatzone.o3t.ru/*"
+        "https://<MATTERMOST_URL>/*"
       ],
       "js": [
+        "config.js",
         "constants.js",
         "utils.js",
         "api.js",
@@ -45,7 +46,7 @@
         "panel.css"
       ],
       "matches": [
-        "https://chatzone.o3t.ru/*"
+        "https://<MATTERMOST_URL>/*"
       ]
     }
   ]

@@ -35,7 +35,7 @@
     // --- Threads & posts ---
 
     // GET /api/v4/posts/{postId}/thread?per_page=...
-    async function apiGetThread(postId, perPage = 200) {
+    async function apiGetThread(postId, perPage = window.MMS.config.THREADS_PER_PAGE) {
         return fetchJSON(`/api/v4/posts/${encodeURIComponent(postId)}/thread?per_page=${perPage}`);
     }
 

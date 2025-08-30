@@ -2,8 +2,9 @@
 /* global window */
 
 (() => {
+    const cfg = (window.MMS && window.MMS.config) || {};
     const consts = {
-        ALLOWED_HOSTS: ["chatzone.o3t.ru"],
+        ALLOWED_HOSTS: cfg.ALLOWED_HOSTS,
         BTN_ID: "mms-fab",
         PANEL_ID: "mms-side-panel",
         ACTIVE_CLASS: "mms-active",
